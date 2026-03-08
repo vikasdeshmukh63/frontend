@@ -126,7 +126,7 @@ export const helloWorld = inngest.createFunction(
       ],
       lifecycle: {
         onResponse: async ({ result, network }) => {
-          const lastAssistantMessageText = lastAssistantTextMessageContent(result)
+          const lastAssistantMessageText = await lastAssistantTextMessageContent(result)
 
           if (lastAssistantMessageText && network) {
             if (lastAssistantMessageText.includes("<task_summary>")) {
