@@ -1,0 +1,17 @@
+node_modules
+.next
+dist
+build
+*.min.js
+*.min.css
+coverage
+.nyc_output
+.cache
+.parcel-cache
+.vscode
+.idea
+*.log
+.DS_Store
+package-lock.json
+yarn.lock
+pnpm-lock.yaml

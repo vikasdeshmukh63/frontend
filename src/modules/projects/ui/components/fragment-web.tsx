@@ -1,9 +1,9 @@
-import { Hint } from "@/components/hint";
-import { Button } from "@/components/ui/button";
-import { Fragment } from "@/generated/prisma/client";
-import { ExternalLinkIcon, RefreshCcwIcon } from "lucide-react";
-import { useState } from "react";
-import { set } from "zod";
+import { Hint } from '@/components/hint';
+import { Button } from '@/components/ui/button';
+import { Fragment } from '@/generated/prisma/client';
+import { ExternalLinkIcon, RefreshCcwIcon } from 'lucide-react';
+import { useState } from 'react';
+import { set } from 'zod';
 
 interface Props {
   data: Fragment;
@@ -26,8 +26,8 @@ export function FragmentWeb({ data }: Props) {
   };
 
   return (
-    <div className="flex flex-col w-full h-full">
-      <div className="p-2 border-b bg-sidebar flex items-center gap-x-2">
+    <div className="flex h-full w-full flex-col">
+      <div className="bg-sidebar flex items-center gap-x-2 border-b p-2">
         <Hint text="Refresh" side="bottom">
           <Button size="sm" variant="outline" onClick={onRefresh}>
             <RefreshCcwIcon />
@@ -51,7 +51,7 @@ export function FragmentWeb({ data }: Props) {
             disabled={!data.sandboxUrl}
             onClick={() => {
               if (!data.sandboxUrl) return;
-              window.open(data.sandboxUrl, "_blank");
+              window.open(data.sandboxUrl, '_blank');
             }}
           >
             <ExternalLinkIcon />

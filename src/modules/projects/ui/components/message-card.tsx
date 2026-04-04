@@ -1,10 +1,10 @@
-import { Card } from "@/components/ui/card";
-import { Fragment } from "@/generated/prisma/client";
-import { MessageRole, MessageType } from "@/generated/prisma/enums";
-import { cn } from "@/lib/utils";
-import { format } from "date-fns";
-import { ChevronRightIcon, Code2Icon } from "lucide-react";
-import Image from "next/image";
+import { Card } from '@/components/ui/card';
+import { Fragment } from '@/generated/prisma/client';
+import { MessageRole, MessageType } from '@/generated/prisma/enums';
+import { cn } from '@/lib/utils';
+import { format } from 'date-fns';
+import { ChevronRightIcon, Code2Icon } from 'lucide-react';
+import Image from 'next/image';
 
 interface UserMessageProps {
   content: string;
@@ -12,8 +12,10 @@ interface UserMessageProps {
 
 const UserMessage = ({ content }: UserMessageProps) => {
   return (
-    <div className="flex justify-end pb-4 pr-2 pl-10">
-      <Card className="rounded-lg bg-muted p-3 shadow-none border-none max-w-[80%] break-words">{content}</Card>
+    <div className="flex justify-end pr-2 pb-4 pl-10">
+      <Card className="bg-muted max-w-[80%] rounded-lg border-none p-3 break-words shadow-none">
+        {content}
+      </Card>
     </div>
   );
 };
@@ -24,21 +26,28 @@ interface FragmentCardProps {
   onFragmentClick: (fragment: Fragment) => void;
 }
 
-const FragmentCard = ({ fragment, isActiveFragment, onFragmentClick }: FragmentCardProps) => {
+const FragmentCard = ({
+  fragment,
+  isActiveFragment,
+  onFragmentClick,
+}: FragmentCardProps) => {
   return (
     <button
       className={cn(
-        "flex item-start text-start gap-2 border-rounded-lg bg-muted w-fit p-3 hover:bg-secondary transition-colors",
-        isActiveFragment && "bg-primary text-primary-foreground border-primary hover:bg-primary",
+        'item-start border-rounded-lg bg-muted hover:bg-secondary flex w-fit gap-2 p-3 text-start transition-colors',
+        isActiveFragment &&
+          'bg-primary text-primary-foreground border-primary hover:bg-primary'
       )}
       onClick={() => onFragmentClick(fragment)}
     >
-      <Code2Icon className="size-4 mt-0.5" />
-      <div className="flex flex-col flex-1">
-        <span className="text-sm font-medium line-clamp-1">{fragment.title}</span>
+      <Code2Icon className="mt-0.5 size-4" />
+      <div className="flex flex-1 flex-col">
+        <span className="line-clamp-1 text-sm font-medium">
+          {fragment.title}
+        </span>
         <span className="text-sm">Preview</span>
       </div>
-      <div className="flex items-center justify-center mt-0.5">
+      <div className="mt-0.5 flex items-center justify-center">
         <ChevronRightIcon className="size-4" />
       </div>
     </button>
@@ -54,19 +63,43 @@ interface AssistantMessageProps {
   type: MessageType;
 }
 
-const AssistantMessage = ({ content, fragment, createdAt, isActiveFragment, onFragmentClick, type }: AssistantMessageProps) => {
+const AssistantMessage = ({
+  content,
+  fragment,
+  createdAt,
+  isActiveFragment,
+  onFragmentClick,
+  type,
+}: AssistantMessageProps) => {
   return (
-    <div className={cn("flex flex-col group px-2 pb-4", type === "ERROR" && "text-red-700 dark:text-red-500")}>
-      <div className="flex items-center gap-2 pl-2 mb-2">
-        <Image src="/logo.svg" alt="Ryzor Logo" width={18} height={18} className="shrink-0" />
+    <div
+      className={cn(
+        'group flex flex-col px-2 pb-4',
+        type === 'ERROR' && 'text-red-700 dark:text-red-500'
+      )}
+    >
+      <div className="mb-2 flex items-center gap-2 pl-2">
+        <Image
+          src="/logo.svg"
+          alt="Ryzor Logo"
+          width={18}
+          height={18}
+          className="shrink-0"
+        />
         <span className="text-sm font-medium">Ryzor</span>
-        <span className="text-xs text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100">
+        <span className="text-muted-foreground text-xs opacity-0 transition-opacity group-hover:opacity-100">
           {format(createdAt, "HH:mm 'on' MMM dd, yyyy")}
         </span>
       </div>
-      <div className="pl-8.5 flex flex-col gap-y-4">
+      <div className="flex flex-col gap-y-4 pl-8.5">
         <span>{content}</span>
-        {fragment && type === "RESULT" && <FragmentCard fragment={fragment} isActiveFragment={isActiveFragment} onFragmentClick={onFragmentClick} />}
+        {fragment && type === 'RESULT' && (
+          <FragmentCard
+            fragment={fragment}
+            isActiveFragment={isActiveFragment}
+            onFragmentClick={onFragmentClick}
+          />
+        )}
       </div>
     </div>
   );
@@ -82,8 +115,16 @@ interface MessageCardProps {
   type: MessageType;
 }
 
-const MessageCard = ({ content, role, fragment, createdAt, isActiveFragment, onFragmentClick, type }: MessageCardProps) => {
-  if (role === "ASSISTANT") {
+const MessageCard = ({
+  content,
+  role,
+  fragment,
+  createdAt,
+  isActiveFragment,
+  onFragmentClick,
+  type,
+}: MessageCardProps) => {
+  if (role === 'ASSISTANT') {
     return (
       <AssistantMessage
         content={content}

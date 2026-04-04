@@ -1,17 +1,17 @@
-import Image from "next/image";
-import { useEffect, useState } from "react";
+import Image from 'next/image';
+import { useEffect, useState } from 'react';
 
 const ShimmerMessages = () => {
   const messages = [
-    "Thinking...",
-    "Loading...",
-    "Generating...",
-    "Analyzing your request...",
-    "Building your website...",
-    "Crafting components...",
-    "Optimizing layout...",
-    "Adding final touches...",
-    "Almost ready...",
+    'Thinking...',
+    'Loading...',
+    'Generating...',
+    'Analyzing your request...',
+    'Building your website...',
+    'Crafting components...',
+    'Optimizing layout...',
+    'Adding final touches...',
+    'Almost ready...',
   ];
 
   const [currentMessageIndex, setCurrentMessageIndex] = useState(0);
@@ -26,19 +26,27 @@ const ShimmerMessages = () => {
 
   return (
     <div>
-      <span className="text-base text-muted-foreground animate-pulse">{messages[currentMessageIndex]}</span>
+      <span className="text-muted-foreground animate-pulse text-base">
+        {messages[currentMessageIndex]}
+      </span>
     </div>
   );
 };
 
 export const MessageLoading = () => {
   return (
-    <div className="flex flex-col group px-2 pb-4">
-      <div className="flex items-center gap-2 pl-2 mb-2">
-        <Image src="./logo.svg" alt="Ryzorai" width={18} height={18} className="shrink-0" />
+    <div className="group flex flex-col px-2 pb-4">
+      <div className="mb-2 flex items-center gap-2 pl-2">
+        <Image
+          src="./logo.svg"
+          alt="Ryzorai"
+          width={18}
+          height={18}
+          className="shrink-0"
+        />
         <span className="text-sm font-medium">Ryzorai</span>
       </div>
-      <div className="pl-8.5 flex flex-col gap-y-4">
+      <div className="flex flex-col gap-y-4 pl-8.5">
         <ShimmerMessages />
       </div>
     </div>

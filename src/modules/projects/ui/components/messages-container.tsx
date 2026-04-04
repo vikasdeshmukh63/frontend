@@ -1,10 +1,10 @@
-import { useTRPC } from "@/trpc/client";
-import { useSuspenseQuery } from "@tanstack/react-query";
-import MessageCard from "./message-card";
-import { MessageForm } from "./message-form";
-import { useEffect, useRef } from "react";
-import { Fragment } from "@/generated/prisma/client";
-import { MessageLoading } from "./message-loading";
+import { useTRPC } from '@/trpc/client';
+import { useSuspenseQuery } from '@tanstack/react-query';
+import MessageCard from './message-card';
+import { MessageForm } from './message-form';
+import { useEffect, useRef } from 'react';
+import { Fragment } from '@/generated/prisma/client';
+import { MessageLoading } from './message-loading';
 
 interface Props {
   projectId: string;
@@ -12,15 +12,19 @@ interface Props {
   setActiveFragment: (fragment: Fragment | null) => void;
 }
 
-const MessagesContainer = ({ projectId, activeFragment, setActiveFragment }: Props) => {
+const MessagesContainer = ({
+  projectId,
+  activeFragment,
+  setActiveFragment,
+}: Props) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const trpc = useTRPC();
   const { data: messages } = useSuspenseQuery(
     trpc.messages.getMany.queryOptions(
       { projectId },
       // todo: temperory live message update
-      { refetchInterval: 5000 },
-    ),
+      { refetchInterval: 5000 }
+    )
   );
 
   // todo: for now this is causing problem
@@ -32,15 +36,15 @@ const MessagesContainer = ({ projectId, activeFragment, setActiveFragment }: Pro
   // }, [messages, setActiveFragment]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages.length]);
 
   const lastMessage = messages[messages.length - 1];
-  const isLastMessageUser = lastMessage?.role === "USER";
+  const isLastMessageUser = lastMessage?.role === 'USER';
 
   return (
-    <div className="flex flex-col flex-1 min-h-0">
-      <div className="flex-1 min-h-0 overflow-y-auto">
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="pt-2 pr-1">
           {messages.map((message) => {
             return (
@@ -61,7 +65,7 @@ const MessagesContainer = ({ projectId, activeFragment, setActiveFragment }: Pro
         </div>
       </div>
       <div className="relative p-3 pt-1">
-        <div className="absolute -top-6 left-0 right-0 h-6 bg-gradient-to-b from transparent to-background pointer-events-none"></div>
+        <div className="from transparent to-background pointer-events-none absolute -top-6 right-0 left-0 h-6 bg-gradient-to-b"></div>
         <MessageForm projectId={projectId} />
       </div>
     </div>
