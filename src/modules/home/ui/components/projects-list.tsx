@@ -2,6 +2,7 @@
 
 import { Button } from '@/components/ui/button';
 import { useTRPC } from '@/trpc/client';
+import { useUser } from '@clerk/nextjs';
 import { useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import Image from 'next/image';
@@ -9,12 +10,16 @@ import Link from 'next/link';
 
 export const ProjectsList = () => {
   const trpc = useTRPC();
+  const {user} = useUser()
   const { data: projects } = useQuery(trpc.projects.getMany.queryOptions());
-  console.log(projects)
+
+  if(!user){
+    return null
+  }
 
   return (
     <div className="dark:bg-sidebar flex w-full flex-col gap-y-6 rounded-xl border bg-white p-8 sm:gap-y-4">
-      <h2 className="text-2xl font-semibold">Saved Vibes</h2>
+      <h2 className="text-2xl font-semibold">{user?.firstName}&apos;s Vibes</h2>
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
         {projects?.length === 0 && (
           <div className="col-span-full text-center">
