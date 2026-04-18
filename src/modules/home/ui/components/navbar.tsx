@@ -5,12 +5,20 @@ import Image from 'next/image';
 import { SignInButton, SignUpButton, useAuth } from '@clerk/nextjs';
 import { Button } from '@/components/ui/button';
 import UserControl from '@/components/user-control';
+import { useScroll } from '@/hooks/use-scroll';
+import { cn } from '@/lib/utils';
 
 const Navbar = () => {
   const { isSignedIn } = useAuth();
+  const isScrolled = useScroll();
 
   return (
-    <nav className="fixed top-0 right-0 left-0 z-50 border-b border-transparent bg-transparent p-4 transition-all duration-200">
+    <nav
+      className={cn(
+        'fixed top-0 right-0 left-0 z-50 border-b border-transparent bg-transparent p-4 transition-all duration-200',
+        isScrolled && "bg-background border-border"
+      )}
+    >
       <div className="mx-auto flex w-full max-w-5xl items-center justify-between">
         <Link href="/" className="flex items-center gap-3">
           <Image src="/logo.svg" alt="Ryzor" width={24} height={24} />
@@ -31,7 +39,7 @@ const Navbar = () => {
             </SignInButton>
           </div>
         ) : (
-          <UserControl showName/>
+          <UserControl showName />
         )}
       </div>
     </nav>
