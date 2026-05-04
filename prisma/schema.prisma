@@ -65,3 +65,25 @@ model Usage {
   points Int 
   expire DateTime? 
 }
+
+enum AiProvider {
+  OPENAI
+  ANTHROPIC
+  GOOGLE_GEMINI
+}
+
+/// Per-user AI preferences (Clerk user id). Optional API keys = bring-your-own-key.
+model UserAiSettings {
+  userId String @id
+
+  provider AiProvider @default(OPENAI)
+  /// Provider-native model id, e.g. gpt-4.1 or claude-sonnet-4-20250514
+  model    String       @default("gpt-4.1")
+
+  openaiApiKey     String?
+  anthropicApiKey  String?
+  geminiApiKey     String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

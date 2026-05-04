@@ -4,7 +4,6 @@ import {
   createState,
   createTool,
   Message,
-  openai,
   type Tool,
 } from '@inngest/agent-kit';
 import { inngest } from './client';
@@ -14,6 +13,15 @@ import { z } from 'zod';
 import { FRAGMENT_TITLE_PROMPT, PROMPT, RESPONSE_PROMPT } from '@/prompt';
 import { prisma } from '@/lib/db';
 import { SANDBOX_TIMEOUT } from './types';
+import {
+  createAgentKitModel,
+  getUserAiRuntimeConfig,
+} from '@/lib/ai-model-factory';
+import {
+  AI_RATE_LIMIT_USER_MESSAGE,
+  isProviderRateLimitError,
+} from '@/inngest/ai-error-utils';
+import { randomUUID } from 'node:crypto';
 
 interface AgentState {
   summary: string;
@@ -21,9 +29,18 @@ interface AgentState {
 }
 
 export const codeAgentFunction = inngest.createFunction(
-  { id: 'code-agent' },
-  { event: 'code-agent/run' },
+  { id: 'code-agent', triggers: [{ event: 'code-agent/run' }] },
   async ({ event, step }) => {
+    const aiConfig = await step.run('load-ai-settings', async () => {
+      const userId =
+        typeof event.data.userId === 'string' ? event.data.userId : undefined;
+      return getUserAiRuntimeConfig(userId);
+    });
+
+    const primaryModel = createAgentKitModel(aiConfig);
+    const fragmentTitleModel = createAgentKitModel(aiConfig);
+    const responseModel = createAgentKitModel(aiConfig);
+
     const sandboxId = await step.run('get-sandbox-id', async () => {
       const sandbox = await Sandbox.create('vikasdeshmukh63/vibe-nextjs-test1');
       await sandbox.setTimeout(SANDBOX_TIMEOUT)
@@ -67,12 +84,7 @@ export const codeAgentFunction = inngest.createFunction(
       name: 'code-agent',
       description: 'An expert coding agent',
       system: PROMPT,
-      model: openai({
-        model: 'gpt-4.1',
-        defaultParameters: {
-          temperature: 0.1,
-        },
-      }),
+      model: primaryModel,
       tools: [
         //terminal tool
         createTool({
@@ -82,7 +94,8 @@ export const codeAgentFunction = inngest.createFunction(
             command: z.string(),
           }),
           handler: async ({ command }, { step }) => {
-            return await step?.run('terminal', async () => {
+            const stepId = `terminal-${randomUUID()}`;
+            return await step?.run(stepId, async () => {
               const buffers = { stdout: '', stderr: '' };
 
               try {
@@ -121,9 +134,8 @@ export const codeAgentFunction = inngest.createFunction(
             { files },
             { step, network }: Tool.Options<AgentState>
           ) => {
-            const newFiles = await step?.run(
-              'createOrUpdateFiles',
-              async () => {
+            const stepId = `createOrUpdateFiles-${randomUUID()}`;
+            const newFiles = await step?.run(stepId, async () => {
                 try {
                   const updatedFiles = network.state.data.files || {};
                   const sandbox = await getSandbox(sandboxId);
@@ -137,8 +149,7 @@ export const codeAgentFunction = inngest.createFunction(
                 } catch (e) {
                   return 'Error: ' + e;
                 }
-              }
-            );
+            });
 
             if (newFiles && typeof newFiles === 'object') {
               network.state.data.files = newFiles;
@@ -152,7 +163,8 @@ export const codeAgentFunction = inngest.createFunction(
             files: z.array(z.string()),
           }),
           handler: async ({ files }, { step }) => {
-            return await step?.run('readFiles', async () => {
+            const stepId = `readFiles-${randomUUID()}`;
+            return await step?.run(stepId, async () => {
               try {
                 const sandbox = await getSandbox(sandboxId);
                 const contents = [];
@@ -197,54 +209,89 @@ export const codeAgentFunction = inngest.createFunction(
       },
     });
 
-    const result = await network.run(event.data.value, {state:state});
+    type RunSuccess = {
+      result: Awaited<ReturnType<typeof network.run>>;
+      fragmentTitle: string;
+      userResponse: string;
+    };
 
-    const fragmentTitleGenerator = createAgent({
-      name: 'fragment-title-generator',
-      description: 'Generates a title for the code fragment based on the task summary',
-      system: FRAGMENT_TITLE_PROMPT,
-      model:openai({
-        model:'gpt-4o'
-      })
-    })
-    const responseGenerator = createAgent({
-      name: 'response-generator',
-      description: 'Generates a response based on the task summary',
-      system: RESPONSE_PROMPT,
-      model:openai({
-        model:'gpt-4o'
-      })
-    })
+    let runSuccess: RunSuccess | null = null;
 
-    const {output:fragmentTitleOutput} = await fragmentTitleGenerator.run(result.state.data.summary);
-    const {output:responseMessageOutput} = await responseGenerator.run(result.state.data.summary);
+    try {
+      const result = await network.run(event.data.value, { state: state });
 
-    const generateFragmentTitle = ()=>{
-      const output = fragmentTitleOutput[0]
-      if(output.type !== "text") {
-        return 'Fragment';
-      }
-      if(Array.isArray(output.content)){
-        return output.content.map((txt)=>txt).join("")
-      }else{
+      const fragmentTitleGenerator = createAgent({
+        name: 'fragment-title-generator',
+        description:
+          'Generates a title for the code fragment based on the task summary',
+        system: FRAGMENT_TITLE_PROMPT,
+        model: fragmentTitleModel,
+      });
+      const responseGenerator = createAgent({
+        name: 'response-generator',
+        description: 'Generates a response based on the task summary',
+        system: RESPONSE_PROMPT,
+        model: responseModel,
+      });
+
+      const { output: fragmentTitleOutput } = await fragmentTitleGenerator.run(
+        result.state.data.summary
+      );
+      const { output: responseMessageOutput } = await responseGenerator.run(
+        result.state.data.summary
+      );
+
+      const parseFragmentTitle = () => {
+        const output = fragmentTitleOutput[0];
+        if (output.type !== 'text') {
+          return 'Fragment';
+        }
+        if (Array.isArray(output.content)) {
+          return output.content.map((txt) => txt).join('');
+        }
         return output.content;
+      };
+
+      const parseResponseMessage = () => {
+        const output = responseMessageOutput[0];
+        if (output.type !== 'text') {
+          return 'Here you go! I built a custom Next.js app based on your request. Check it out and let me know if you need any changes.';
+        }
+        if (Array.isArray(output.content)) {
+          return output.content.map((txt) => txt).join('');
+        }
+        return output.content;
+      };
+
+      runSuccess = {
+        result,
+        fragmentTitle: parseFragmentTitle(),
+        userResponse: parseResponseMessage(),
+      };
+    } catch (err) {
+      if (isProviderRateLimitError(err)) {
+        await step.run('save-provider-rate-limit', async () =>
+          prisma.message.create({
+            data: {
+              projectId: event.data.projectId,
+              content: AI_RATE_LIMIT_USER_MESSAGE,
+              role: 'ASSISTANT',
+              type: 'ERROR',
+            },
+          })
+        );
+        return {
+          url: '',
+          title: '',
+          files: {},
+          summary: '',
+          rateLimited: true as const,
+        };
       }
+      throw err;
     }
 
-    const generateResponseMessage = ()=>{
-      const output = responseMessageOutput[0]
-      if(output.type !== "text") {
-        return 'Here you go! I built a custom Next.js app based on your request. Check it out and let me know if you need any changes.';
-      }
-      if(Array.isArray(output.content)){
-        return output.content.map((txt)=>txt).join("")
-      }else{
-        return output.content;
-      }
-    }
-
-
-    
+    const { result, fragmentTitle, userResponse } = runSuccess;
 
     const isError =
       !result.state.data.summary ||
@@ -258,7 +305,7 @@ export const codeAgentFunction = inngest.createFunction(
 
     await step.run('save-result', async () => {
       if (isError) {
-        return await prisma.message.create({
+        return prisma.message.create({
           data: {
             projectId: event.data.projectId,
             content: 'Something went wrong. Please try again later',
@@ -268,16 +315,16 @@ export const codeAgentFunction = inngest.createFunction(
         });
       }
 
-      return await prisma.message.create({
+      return prisma.message.create({
         data: {
           projectId: event.data.projectId,
-          content: generateResponseMessage(),
+          content: userResponse,
           role: 'ASSISTANT',
           type: 'RESULT',
           fragment: {
             create: {
-              sandboxUrl: sandboxUrl,
-              title: generateFragmentTitle(),
+              sandboxUrl,
+              title: fragmentTitle,
               files: result.state.data.files,
             },
           },

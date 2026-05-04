@@ -12,9 +12,10 @@ export async function getUsageTracker(){
     const {has} = await auth()
     const hasProAccess = has({plan:"pro"})
 
+    // Prisma delegates use camelCase (model `Usage` → `prisma.usage`), not PascalCase.
     const usageTracker = new RateLimiterPrisma({
-        storeClient:prisma,
-        tableName:"Usage",
+        storeClient: prisma,
+        tableName: 'usage',
         points:hasProAccess ? PRO_POINTS : FREE_POINTS,
         duration:DURATION, // 30 days
     })

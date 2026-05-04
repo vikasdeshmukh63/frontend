@@ -2,7 +2,7 @@ import { PrismaClient } from '../generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
 const globalForPrisma = global as unknown as {
-  prisma: PrismaClient;
+  prisma?: PrismaClient;
 };
 
 function createPrismaClient() {
@@ -12,5 +12,39 @@ function createPrismaClient() {
   return new PrismaClient({ adapter });
 }
 
-export const prisma =
-  globalForPrisma.prisma ?? (globalForPrisma.prisma = createPrismaClient());
+/** True when the singleton matches the current generated schema (delegates wired). */
+function schemaDelegateOk(client: PrismaClient | undefined): boolean {
+  if (!client) return false;
+  return (
+    typeof (
+      client as unknown as {
+        userAiSettings?: { upsert: (...args: unknown[]) => Promise<unknown> };
+      }
+    ).userAiSettings?.upsert === 'function'
+  );
+}
+
+function getSingletonPrismaClient(): PrismaClient {
+  const current = globalForPrisma.prisma;
+  if (current && schemaDelegateOk(current)) {
+    return current;
+  }
+
+  const stale = current;
+  if (stale) {
+    void stale.$disconnect();
+    globalForPrisma.prisma = undefined;
+  }
+
+  const created = createPrismaClient();
+  if (!schemaDelegateOk(created)) {
+    throw new Error(
+      'Prisma Client is outdated (missing UserAiSettings). Run `npx prisma generate` and restart the dev server.'
+    );
+  }
+
+  globalForPrisma.prisma = created;
+  return created;
+}
+
+export const prisma = getSingletonPrismaClient();

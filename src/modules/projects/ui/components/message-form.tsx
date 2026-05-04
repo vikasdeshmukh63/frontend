@@ -10,6 +10,7 @@ import { ArrowUp, Loader2Icon } from 'lucide-react';
 import { useTRPC } from '@/trpc/client';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
+import { ChatAiSettingsButton } from '@/components/chat/chat-ai-settings';
 import { Usage } from './usage';
 import { useRouter } from 'next/navigation';
 
@@ -106,12 +107,15 @@ export const MessageForm = ({ projectId }: Props) => {
             );
           }}
         />
-        <div className="flex items-end justify-between gap-x-2 pt-2">
-          <div className="text-muted-foreground font-mono text-[10px]">
-            <kbd className="bg-muted text-muted-foreground pointer-events-none ml-auto inline-flex h-5 items-center gap-1 rounded border px-1.5 font-mono text-[10px] font-medium select-none">
-              <span>&#8984;</span>Enter
-            </kbd>
-            &nbsp;to submit
+        <div className="flex flex-wrap items-end justify-between gap-x-2 gap-y-2 pt-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-end gap-x-3 gap-y-1">
+            <ChatAiSettingsButton />
+            <div className="text-muted-foreground font-mono text-[10px]">
+              <kbd className="bg-muted text-muted-foreground pointer-events-none inline-flex h-5 items-center gap-1 rounded border px-1.5 font-mono text-[10px] font-medium select-none">
+                <span>&#8984;</span>Enter
+              </kbd>
+              &nbsp;to submit
+            </div>
           </div>
           <Button
             disabled={isButtonDisabled}
