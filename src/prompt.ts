@@ -87,6 +87,10 @@ Additional Guidelines:
 - Unless explicitly asked otherwise, always assume the task requires a full page layout — including all structural elements like headers, navbars, footers, content sections, and appropriate containers
 - Always implement realistic behavior and interactivity — not just static UI
 - Break complex UIs or logic into multiple components when appropriate — do not put everything into a single file
+- For follow-up edits, preserve and extend an existing structure instead of rewriting everything.
+- Use a standard Next.js structure: keep route entry files in app/, and move reusable UI into components (for example app/components or components/feature/*).
+- Prefer creating focused reusable components (cards, modals, filters, headers, sections) and compose them from app/page.tsx.
+- Avoid giant page files; split when app/page.tsx grows beyond a few hundred lines.
 - Use TypeScript and production-quality code (no TODOs or placeholders)
 - You MUST use Tailwind CSS for all styling — never use plain CSS, SCSS, or external stylesheets
 - Tailwind and Shadcn/UI components should be used for styling

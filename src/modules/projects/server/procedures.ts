@@ -1,6 +1,7 @@
 import { inngest } from '@/inngest/client';
 import { prisma } from '@/lib/db';
 import { consumeCredits } from '@/lib/usage';
+import { toAppTrpcError } from '@/lib/prisma-errors';
 import { protectedProcedure, createTRPCRouter } from '@/trpc/init';
 import { TRPCError } from '@trpc/server';
 import { generateSlug } from 'random-word-slugs';
@@ -50,42 +51,44 @@ export const projectsRouter = createTRPCRouter({
       })
     )
     .mutation(async ({ input, ctx }) => {
+      try {
+        await consumeCredits();
+      } catch {
+        throw new TRPCError({
+          code: 'TOO_MANY_REQUESTS',
+          message: 'You have run out of credits',
+        });
+      }
 
-            try {
-              await consumeCredits()
-            } catch (error) {
-              if (error instanceof Error ) {
-                throw new TRPCError({ code: "BAD_REQUEST", message: "Something went wrong" });
-              }else{
-                throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "You have run out of credits" });
-              }
-            }
-
-      const createdProject = await prisma.project.create({
-        data: {
-          userId: ctx.auth.userId,
-          name: generateSlug(2, {
-            format: 'kebab',
-          }),
-          messages: {
-            create: {
-              content: input.value,
-              role: 'USER',
-              type: 'RESULT',
+      try {
+        const createdProject = await prisma.project.create({
+          data: {
+            userId: ctx.auth.userId,
+            name: generateSlug(2, {
+              format: 'kebab',
+            }),
+            messages: {
+              create: {
+                content: input.value,
+                role: 'USER',
+                type: 'RESULT',
+              },
             },
           },
-        },
-      });
+        });
 
-      await inngest.send({
-        name: 'code-agent/run',
-        data: {
-          value: input.value,
-          projectId: createdProject.id,
-          userId: ctx.auth.userId,
-        },
-      });
+        await inngest.send({
+          name: 'code-agent/run',
+          data: {
+            value: input.value,
+            projectId: createdProject.id,
+            userId: ctx.auth.userId,
+          },
+        });
 
-      return createdProject;
+        return createdProject;
+      } catch (error) {
+        throw toAppTrpcError(error);
+      }
     }),
 });

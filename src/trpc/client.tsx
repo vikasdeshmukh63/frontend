@@ -22,12 +22,22 @@ function getQueryClient() {
   if (!browserQueryClient) browserQueryClient = makeQueryClient();
   return browserQueryClient;
 }
+/** Absolute URL — required for SSR of this client boundary and must match hydrate. */
 function getUrl() {
-  const base = (() => {
-    if (typeof window !== 'undefined') return '';
-    return process.env.NEXT_PUBLIC_TRPC_URL;
-  })();
-  return `${base}/api/trpc`;
+  if (typeof window !== 'undefined') {
+    return `${window.location.origin}/api/trpc`;
+  }
+  const base =
+    process.env.NEXT_PUBLIC_TRPC_URL ??
+    process.env.NEXT_PUBLIC_APP_URL ??
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
+  if (!base) {
+    console.warn(
+      '[tRPC] Set NEXT_PUBLIC_APP_URL so server renders use a valid API base (fallback: http://localhost:3000)'
+    );
+  }
+  const origin = (base ?? 'http://localhost:3000').replace(/\/$/, '');
+  return `${origin}/api/trpc`;
 }
 export function TRPCReactProvider(
   props: Readonly<{

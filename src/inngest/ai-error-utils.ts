@@ -49,6 +49,10 @@ export function isProviderRateLimitError(error: unknown): boolean {
   if (typeof error === "object" && error !== null) {
     const t = (error as { type?: string }).type;
     if (t === "rate_limit_error") return true;
+    const code = (error as { code?: string }).code;
+    if (code === 'LOCAL_AI_RATE_LIMIT') return true;
+    const name = (error as { name?: string }).name;
+    if (name === 'LocalAiRateLimitError') return true;
     const err = (error as { error?: { type?: string } }).error;
     if (err?.type === "rate_limit_error") return true;
   }
