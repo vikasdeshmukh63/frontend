@@ -16,6 +16,12 @@ export function FragmentWeb({ data }: Props) {
   const [frameState, setFrameState] = useState<FrameState>('loading');
 
   useEffect(() => {
+    // AI generations usually keep the same sandbox URL, so force iframe remount
+    // whenever a new fragment record is selected.
+    setFragmentKey((prev) => prev + 1);
+  }, [data.id]);
+
+  useEffect(() => {
     setFrameState('loading');
     const timeout = window.setTimeout(() => {
       setFrameState((current) => (current === 'ready' ? current : 'error'));

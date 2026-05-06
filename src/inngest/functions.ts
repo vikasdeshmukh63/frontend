@@ -47,6 +47,13 @@ interface AgentState {
 const AI_INVALID_REQUEST_USER_MESSAGE =
   'The AI request payload was empty or invalid for the selected model. Please try again, or send a slightly more specific prompt.';
 
+function shouldPreloadContextFiles(): boolean {
+  const flag = process.env.INNGEST_PRELOAD_CONTEXT_FILES;
+  if (!flag) return false;
+  const normalized = flag.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
+}
+
 function normalizePromptInput(value: unknown): string {
   const text = typeof value === 'string' ? value.trim() : '';
   if (text.length > 0) return text;
@@ -131,6 +138,7 @@ export const codeAgentFunction = inngest.createFunction(
     },
   },
   async ({ event, step }) => {
+    const preloadContextFiles = shouldPreloadContextFiles();
     const normalizedPrompt = normalizePromptInput(event.data.value);
     const userId =
       typeof event.data.userId === 'string' ? event.data.userId : undefined;
@@ -195,8 +203,11 @@ export const codeAgentFunction = inngest.createFunction(
           sandboxId,
           previousMessages: formattedMessages.reverse(),
           allFiles: initialFiles,
-          contextFiles:
-            Object.keys(selectedFiles).length > 0 ? selectedFiles : initialFiles,
+          contextFiles: preloadContextFiles
+            ? Object.keys(selectedFiles).length > 0
+              ? selectedFiles
+              : initialFiles
+            : {},
           graphContext,
         };
       }
@@ -285,6 +296,26 @@ export const codeAgentFunction = inngest.createFunction(
 
             if (newFiles && typeof newFiles === 'object') {
               network.state.data.files = newFiles;
+            }
+          },
+        }),
+        createTool({
+          name: 'listFiles',
+          description:
+            'list files in the sandbox to inspect code structure before reading',
+          parameters: z.object({
+            path: z.string().min(1),
+          }),
+          handler: async ({ path }) => {
+            try {
+              const sandbox = await getSandbox(sandboxId);
+              const targetPath = path.trim() || '.';
+              const result = await sandbox.commands.run(
+                `find ${JSON.stringify(targetPath)} -type f | sort`
+              );
+              return result.stdout;
+            } catch (e) {
+              return 'Error: ' + e;
             }
           },
         }),
