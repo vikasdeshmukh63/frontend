@@ -1,9 +1,6 @@
 // This is your Prisma schema file,
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -13,14 +10,72 @@ datasource db {
   provider = "postgresql"
 }
 
+// --- Auth.js / NextAuth ----------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime? @map("email_verified")
+  image         String?
+  passwordHash  String?   @map("password_hash")
+
+  accounts Account[]
+  sessions Session[]
+
+  projects       Project[]
+  userAiSettings UserAiSettings?
+  creditBalance  CreditBalance?
+  creditLedgers  CreditLedger[]
+  razorpayOrders RazorpayOrder[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String    @map("user_id")
+  type              String
+  provider          String
+  providerAccountId String    @map("provider_account_id")
+  refresh_token     String?   @db.Text
+  access_token      String?   @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?   @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id")
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// --- App -------------------------------------------------------------------
+
 model Project {
-  id String @id @default(uuid())
-  name String
-  userId String
+  id           String  @id @default(uuid())
+  name         String
+  userId       String
+  user         User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Latest E2B sandbox for this project — reused across chat turns until it expires.
   e2bSandboxId String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   messages Message[]
 }
@@ -36,36 +91,41 @@ enum MessageType {
 }
 
 model Message {
-  id String @id @default(uuid())
-  content String 
-  role MessageRole
-  type MessageType
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String      @id @default(uuid())
+  content   String
+  role      MessageRole
+  type      MessageType
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
 
   projectId String
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  fragment Fragment? 
+  /// When a user edits a previous message, we create a new Message row and point it here.
+  editedFromId String?  @map("edited_from_id")
+  editedFrom   Message? @relation("MessageEdits", fields: [editedFromId], references: [id], onDelete: SetNull)
+  edits        Message[] @relation("MessageEdits")
+
+  fragment Fragment?
 }
 
 model Fragment {
-  id String @id @default(uuid())
-  messageId String @unique
-  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  id        String   @id @default(uuid())
+  messageId String   @unique
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
   sandboxUrl String
-  title String
-  files Json
+  title      String
+  files      Json
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model Usage {
-  key String @id
-  points Int 
-  expire DateTime? 
+  key    String    @id
+  points Int
+  expire DateTime?
 }
 
 enum AiProvider {
@@ -74,18 +134,118 @@ enum AiProvider {
   GOOGLE_GEMINI
 }
 
-/// Per-user AI preferences (Clerk user id). Optional API keys = bring-your-own-key.
+/// Per-user AI preferences (Auth.js user id). Optional API keys = bring-your-own-key.
 model UserAiSettings {
   userId String @id
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   provider AiProvider @default(OPENAI)
   /// Provider-native model id, e.g. gpt-4.1 or claude-sonnet-4-20250514
-  model    String       @default("gpt-4.1")
+  model String @default("gpt-4.1")
 
-  openaiApiKey     String?
-  anthropicApiKey  String?
-  geminiApiKey     String?
+  openaiApiKey    String?
+  anthropicApiKey String?
+  geminiApiKey    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// --- Credits & Razorpay ----------------------------------------------------
+
+enum CreditLedgerType {
+  GRANT
+  CONSUME
+  REFUND_REVERSAL
+  ADJUSTMENT
+}
+
+model CreditBalance {
+  userId  String @id
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance Int    @default(0)
+
+  updatedAt DateTime @updatedAt
+}
+
+model CreditLedger {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Positive = grant; negative = consume or reversal.
+  delta           Int
+  type            CreditLedgerType
+  reason          String?
+  razorpayPaymentId String? @map("razorpay_payment_id")
+  metadata        Json?
+  /// Optional idempotency key (e.g. failed-generation refund tied to an Inngest run).
+  correlationId String? @unique @map("correlation_id")
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+enum RazorpayOrderStatus {
+  CREATED
+  PAID
+  FAILED
+}
+
+model RazorpayOrder {
+  id              String @id @default(cuid())
+  razorpayOrderId String @unique @map("razorpay_order_id")
+  userId          String
+  user            User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  packId       String
+  /// Amount in smallest currency unit (e.g. USD cents or INR paise).
+  amountMinor  Int              @map("amount_minor")
+  currency     String           @default("USD")
+  credits      Int
+  status       RazorpayOrderStatus @default(CREATED)
+  createdAt    DateTime         @default(now())
+
+  payments RazorpayPayment[]
+
+  @@index([userId])
+}
+
+model RazorpayPayment {
+  id                String @id @default(cuid())
+  razorpayPaymentId String @unique @map("razorpay_payment_id")
+  orderId           String @map("order_id")
+  order             RazorpayOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  amountMinor Int    @map("amount_minor")
+  currency    String @default("USD")
+  status      String
+
+  createdAt DateTime @default(now())
+
+  refunds RefundRecord[]
+
+  @@index([orderId])
+}
+
+model RefundRecord {
+  id               String @id @default(cuid())
+  razorpayRefundId String @unique @map("razorpay_refund_id")
+  paymentId        String @map("payment_id")
+  payment          RazorpayPayment @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  amountMinor Int    @map("amount_minor")
+  currency    String @default("USD")
+  status      String
+
+  createdAt DateTime @default(now())
+}
+
+/// Razorpay webhook idempotency (event id).
+model WebhookEvent {
+  id          String   @id @default(cuid())
+  eventId     String   @unique @map("event_id")
+  eventType   String   @map("event_type")
+  processedAt DateTime @default(now())
 }

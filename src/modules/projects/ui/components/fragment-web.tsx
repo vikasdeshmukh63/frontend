@@ -1,17 +1,28 @@
 import { Hint } from '@/components/hint';
 import { Button } from '@/components/ui/button';
 import { Fragment } from '@/generated/prisma/client';
-import { ExternalLinkIcon, RefreshCcwIcon } from 'lucide-react';
-import { useState } from 'react';
-import { set } from 'zod';
+import { AlertTriangleIcon, ExternalLinkIcon, RefreshCcwIcon } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 interface Props {
   data: Fragment;
 }
 
+type FrameState = 'loading' | 'ready' | 'error';
+
 export function FragmentWeb({ data }: Props) {
   const [fragmentKey, setFragmentKey] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [frameState, setFrameState] = useState<FrameState>('loading');
+
+  useEffect(() => {
+    setFrameState('loading');
+    const timeout = window.setTimeout(() => {
+      setFrameState((current) => (current === 'ready' ? current : 'error'));
+    }, 12000);
+
+    return () => window.clearTimeout(timeout);
+  }, [fragmentKey, data.sandboxUrl]);
 
   const onRefresh = () => {
     setFragmentKey((prev) => prev + 1);
@@ -58,13 +69,46 @@ export function FragmentWeb({ data }: Props) {
           </Button>
         </Hint>
       </div>
-      <iframe
-        key={fragmentKey}
-        className="h-full w-full"
-        sandbox="allow-forms allow-scripts allow-same-origin"
-        loading="lazy"
-        src={data.sandboxUrl}
-      />
+
+      <div className="relative h-full w-full">
+        <iframe
+          key={fragmentKey}
+          className="h-full w-full"
+          sandbox="allow-forms allow-scripts allow-same-origin"
+          loading="lazy"
+          src={data.sandboxUrl}
+          onLoad={() => setFrameState('ready')}
+          onError={() => setFrameState('error')}
+        />
+
+        {frameState === 'loading' && (
+          <div className="bg-background/60 text-muted-foreground absolute inset-0 flex items-center justify-center backdrop-blur-[1px]">
+            <p className="text-sm">Loading preview...</p>
+          </div>
+        )}
+
+        {frameState === 'error' && (
+          <div className="bg-background/90 absolute inset-0 flex items-center justify-center p-6">
+            <div className="bg-card max-w-lg rounded-lg border p-4 text-sm">
+              <p className="mb-2 flex items-center gap-2 font-medium">
+                <AlertTriangleIcon className="size-4 text-amber-500" />
+                Preview failed to load
+              </p>
+              <p className="text-muted-foreground mb-3">
+                The sandbox app may have a runtime/build error. Open it in a new tab to
+                inspect the exact error output.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => data.sandboxUrl && window.open(data.sandboxUrl, '_blank')}
+              >
+                <ExternalLinkIcon /> Open sandbox logs
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

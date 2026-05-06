@@ -1,50 +1,40 @@
 import { Button } from '@/components/ui/button';
-import { useAuth } from '@clerk/nextjs';
-import { formatDuration, intervalToDuration } from 'date-fns';
 import { CrownIcon } from 'lucide-react';
 import Link from 'next/link';
-import { useMemo } from 'react';
 
 interface Props {
   points: number;
   msBeforeNext: number;
+  generationCost?: number;
 }
 
-export const Usage = ({ points, msBeforeNext }: Props) => {
-  const { has } = useAuth();
-  const hasProAccess = has?.({ plan: 'pro' });
-
-  const resetTime = useMemo(()=>{ 
-    try {
-      return formatDuration(
-        intervalToDuration({
-          start: new Date(),
-          end:new Date(Date.now() + msBeforeNext)
-        }),
-        {format:['months','days','hours']}
-      )
-    } catch (error) {
-      console.error("Error formatting duartion",error)
-      return 'unknown'
-    }
-  },[msBeforeNext])
+export const Usage = ({
+  points,
+  msBeforeNext,
+  generationCost = 2,
+}: Props) => {
+  const lowBalance = points < generationCost * 2;
 
   return (
     <div className="bg-background rounded-t-xl border border-b-0 p-2.5">
       <div className="flex items-center gap-x-2">
         <div>
-          <p className="text-sm">
-            {points} {hasProAccess ? '' : 'free'}credits remaining
-          </p>
-          <p className="text-muted-foreground text-xs">
-            Resets in{' '} {resetTime}
-          </p>
+          <p className="text-sm">{points} credits remaining</p>
+          {msBeforeNext > 0 ? (
+            <p className="text-muted-foreground text-xs">
+              Rate-limit window active (legacy field).
+            </p>
+          ) : (
+            <p className="text-muted-foreground text-xs">
+              Each message starts around {generationCost}+ credits (depends on model and prompt size).
+            </p>
+          )}
         </div>
-        {!hasProAccess && (
+        {lowBalance && (
           <Button asChild size="sm" variant="tertiary" className="ml-auto">
             <Link href="/pricing">
               <CrownIcon />
-              Upgrade
+              Buy credits
             </Link>
           </Button>
         )}

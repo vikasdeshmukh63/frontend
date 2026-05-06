@@ -1,56 +1,147 @@
+'use client';
+
 import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Fragment } from '@/generated/prisma/client';
 import { MessageRole, MessageType } from '@/generated/prisma/enums';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
-import { ChevronRightIcon, Code2Icon } from 'lucide-react';
+import {
+  CheckIcon,
+  CopyIcon,
+  Loader2Icon,
+  PencilIcon,
+  RotateCcwIcon,
+  XIcon,
+} from 'lucide-react';
 import Image from 'next/image';
+import TextareaAutosize from 'react-textarea-autosize';
+import { useEffect, useState } from 'react';
 
 interface UserMessageProps {
   content: string;
+  onCopy: () => void;
+  onEdit: () => void;
+  isEditing: boolean;
+  editingDraft: string;
+  onEditingDraftChange: (value: string) => void;
+  onCancelEdit: () => void;
+  onSaveEdit: () => void;
+  canRevertEditToPrevious: boolean;
+  onRevertEditToPrevious: () => void;
+  isSavingEdit: boolean;
 }
 
-const UserMessage = ({ content }: UserMessageProps) => {
+const UserMessage = ({
+  content,
+  onCopy,
+  onEdit,
+  isEditing,
+  editingDraft,
+  onEditingDraftChange,
+  onCancelEdit,
+  onSaveEdit,
+  canRevertEditToPrevious,
+  onRevertEditToPrevious,
+  isSavingEdit,
+}: UserMessageProps) => {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 900);
+    return () => clearTimeout(t);
+  }, [copied]);
+
   return (
-    <div className="flex justify-end pr-2 pb-4 pl-10">
-      <Card className="bg-muted max-w-[80%] rounded-lg border-none p-3 break-words shadow-none">
-        {content}
-      </Card>
+    <div className="group flex justify-end pr-2 pb-4 pl-10">
+      <div className="flex max-w-[80%] flex-col items-end gap-1">
+        <Card className="bg-muted w-full rounded-lg border-none p-3 shadow-none">
+          {isEditing ? (
+            <TextareaAutosize
+              value={editingDraft}
+              onChange={(e) => onEditingDraftChange(e.target.value)}
+              minRows={2}
+              maxRows={8}
+              className="w-full resize-none border-none bg-transparent outline-none"
+            />
+          ) : (
+            <span className="wrap-break-word">{content}</span>
+          )}
+        </Card>
+        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7"
+            onClick={() => {
+              onCopy();
+              setCopied(true);
+            }}
+          >
+            {copied ? (
+              <CheckIcon className="size-4" />
+            ) : (
+              <CopyIcon className="size-4" />
+            )}
+          </Button>
+          {isEditing ? (
+            <>
+              {canRevertEditToPrevious && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2 text-xs"
+                  onClick={onRevertEditToPrevious}
+                  disabled={isSavingEdit}
+                >
+                  Revert
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                onClick={onCancelEdit}
+                title="Cancel"
+                disabled={isSavingEdit}
+              >
+                <XIcon className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-7 w-7"
+                onClick={onSaveEdit}
+                title="Save & regenerate"
+                disabled={isSavingEdit || !editingDraft.trim()}
+              >
+                {isSavingEdit ? (
+                  <Loader2Icon className="size-4 animate-spin" />
+                ) : (
+                  <CheckIcon className="size-4" />
+                )}
+              </Button>
+            </>
+          ) : (
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              onClick={onEdit}
+              title="Edit in place"
+              disabled={isSavingEdit}
+            >
+              <PencilIcon className="size-4" />
+            </Button>
+          )}
+        </div>
+      </div>
     </div>
-  );
-};
-
-interface FragmentCardProps {
-  fragment: Fragment;
-  isActiveFragment: boolean;
-  onFragmentClick: (fragment: Fragment) => void;
-}
-
-const FragmentCard = ({
-  fragment,
-  isActiveFragment,
-  onFragmentClick,
-}: FragmentCardProps) => {
-  return (
-    <button
-      className={cn(
-        'item-start border-rounded-lg bg-muted hover:bg-secondary flex w-fit gap-2 p-3 text-start transition-colors',
-        isActiveFragment &&
-          'bg-primary text-primary-foreground border-primary hover:bg-primary'
-      )}
-      onClick={() => onFragmentClick(fragment)}
-    >
-      <Code2Icon className="mt-0.5 size-4" />
-      <div className="flex flex-1 flex-col">
-        <span className="line-clamp-1 text-sm font-medium">
-          {fragment.title}
-        </span>
-        <span className="text-sm">Preview</span>
-      </div>
-      <div className="mt-0.5 flex items-center justify-center">
-        <ChevronRightIcon className="size-4" />
-      </div>
-    </button>
   );
 };
 
@@ -58,19 +149,28 @@ interface AssistantMessageProps {
   content: string;
   fragment: Fragment | null;
   createdAt: Date;
-  isActiveFragment: boolean;
-  onFragmentClick: (fragment: Fragment) => void;
   type: MessageType;
+  onCopy: () => void;
+  onRevert: () => void;
+  isReverting: boolean;
 }
 
 const AssistantMessage = ({
   content,
   fragment,
   createdAt,
-  isActiveFragment,
-  onFragmentClick,
   type,
+  onCopy,
+  onRevert,
+  isReverting,
 }: AssistantMessageProps) => {
+  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(() => setCopied(false), 900);
+    return () => clearTimeout(t);
+  }, [copied]);
+
   return (
     <div
       className={cn(
@@ -81,48 +181,98 @@ const AssistantMessage = ({
       <div className="mb-2 flex items-center gap-2 pl-2">
         <Image
           src="/logo.svg"
-          alt="Ryzor Logo"
+          alt="Fingerchip Logo"
           width={18}
           height={18}
           className="shrink-0"
         />
-        <span className="text-sm font-medium">Ryzor</span>
+        <span className="text-sm font-medium">Fingerchip</span>
         <span className="text-muted-foreground text-xs opacity-0 transition-opacity group-hover:opacity-100">
           {format(createdAt, "HH:mm 'on' MMM dd, yyyy")}
         </span>
       </div>
       <div className="flex flex-col gap-y-4 pl-8.5">
         <span>{content}</span>
-        {fragment && type === 'RESULT' && (
-          <FragmentCard
-            fragment={fragment}
-            isActiveFragment={isActiveFragment}
-            onFragmentClick={onFragmentClick}
-          />
-        )}
+        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            className="h-7 w-7"
+            onClick={() => {
+              onCopy();
+              setCopied(true);
+            }}
+          >
+            {copied ? (
+              <CheckIcon className="size-4" />
+            ) : (
+              <CopyIcon className="size-4" />
+            )}
+          </Button>
+          {fragment && type === 'RESULT' && (
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              onClick={onRevert}
+              title="Revert to this version"
+              disabled={isReverting}
+            >
+              {isReverting ? (
+                <Loader2Icon className="size-4 animate-spin" />
+              ) : (
+                <RotateCcwIcon className="size-4" />
+              )}
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   );
 };
 
 interface MessageCardProps {
+  messageId: string;
   content: string;
   role: MessageRole;
   fragment: Fragment | null;
+  editedFromContent?: string | null;
   createdAt: Date;
-  isActiveFragment: boolean;
-  onFragmentClick: (fragment: Fragment) => void;
   type: MessageType;
+  isEditing: boolean;
+  editingDraft: string;
+  onEditingDraftChange: (value: string) => void;
+  isReverting: boolean;
+  isSavingEdit: boolean;
+  onCopy: () => void;
+  onEdit: () => void;
+  onCancelEdit: () => void;
+  onSaveEdit: () => void;
+  onRevertEditToPrevious: () => void;
+  onRevert: () => void;
 }
 
 const MessageCard = ({
+  messageId: _messageId,
   content,
   role,
   fragment,
+  editedFromContent,
   createdAt,
-  isActiveFragment,
-  onFragmentClick,
   type,
+  isEditing,
+  editingDraft,
+  onEditingDraftChange,
+  isReverting,
+  isSavingEdit,
+  onCopy,
+  onEdit,
+  onCancelEdit,
+  onSaveEdit,
+  onRevertEditToPrevious,
+  onRevert,
 }: MessageCardProps) => {
   if (role === 'ASSISTANT') {
     return (
@@ -130,14 +280,29 @@ const MessageCard = ({
         content={content}
         fragment={fragment}
         createdAt={createdAt}
-        isActiveFragment={isActiveFragment}
-        onFragmentClick={onFragmentClick}
         type={type}
+        onCopy={onCopy}
+        onRevert={onRevert}
+        isReverting={isReverting}
       />
     );
   }
 
-  return <UserMessage content={content} />;
+  return (
+    <UserMessage
+      content={content}
+      onCopy={onCopy}
+      onEdit={onEdit}
+      isEditing={isEditing}
+      editingDraft={editingDraft}
+      onEditingDraftChange={onEditingDraftChange}
+      onCancelEdit={onCancelEdit}
+      onSaveEdit={onSaveEdit}
+      canRevertEditToPrevious={!!editedFromContent}
+      onRevertEditToPrevious={onRevertEditToPrevious}
+      isSavingEdit={isSavingEdit}
+    />
+  );
 };
 
 export default MessageCard;

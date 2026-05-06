@@ -2,7 +2,6 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useTheme } from 'next-themes';
 import { useSuspenseQuery } from '@tanstack/react-query';
-import { useState } from 'react';
 import { useTRPC } from '@/trpc/client';
 import { Button } from '@/components/ui/button';
 
@@ -41,7 +40,7 @@ export const ProjectHeader = ({ projectId }: Props) => {
             size="sm"
             className="pl-2! transition-opacity hover:bg-transparent hover:opacity-75 focus-visible:ring-0"
           >
-            <Image src="/logo.svg" alt="Ryzorai" width={18} height={18} />
+            <Image src="/logo.svg" alt="Fingerchipai" width={18} height={18} />
             <span className="text-sm font-medium">{project.name}</span>
             <ChevronDownIcon />
           </Button>

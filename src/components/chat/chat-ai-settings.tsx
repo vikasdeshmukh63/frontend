@@ -1,6 +1,7 @@
 'use client';
 
-import { useAuth, useClerk } from '@clerk/nextjs';
+import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, KeyRound, Settings2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -63,8 +64,9 @@ function hasKeyForProvider(
 }
 
 export function ChatAiSettingsButton() {
-  const { isSignedIn } = useAuth();
-  const clerk = useClerk();
+  const { status } = useSession();
+  const isSignedIn = status === 'authenticated';
+  const router = useRouter();
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -152,7 +154,7 @@ export function ChatAiSettingsButton() {
 
   const onSave = () => {
     if (!isSignedIn) {
-      clerk.openSignIn();
+      router.push('/sign-in');
       return;
     }
     update.mutate({

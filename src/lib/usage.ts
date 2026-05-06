@@ -1,46 +1,41 @@
-import { auth } from "@clerk/nextjs/server";
-import { RateLimiterPrisma } from "rate-limiter-flexible";
-import { prisma } from "./db";
+import { auth } from '@/auth';
+import {
+  getCreditBalance,
+  InsufficientCreditsError,
+} from '@/lib/credit-service';
+import { MIN_DYNAMIC_GENERATION_CREDITS } from '@/lib/credit-pricing';
 
-const FREE_POINTS = 5;
-const PRO_POINTS = 100;
-const DURATION = 30*24*60*60; // 30 days in seconds
-const GENERATION_COST = 2
+export { MIN_DYNAMIC_GENERATION_CREDITS as GENERATION_COST };
 
-export async function getUsageTracker(){
-
-    const {has} = await auth()
-    const hasProAccess = has({plan:"pro"})
-
-    // Prisma delegates use camelCase (model `Usage` → `prisma.usage`), not PascalCase.
-    const usageTracker = new RateLimiterPrisma({
-        storeClient: prisma,
-        tableName: 'usage',
-        points:hasProAccess ? PRO_POINTS : FREE_POINTS,
-        duration:DURATION, // 30 days
-    })
-    return usageTracker;
+export async function consumeCreditsForUser(userId: string) {
+  if (!userId) throw new Error('User not authenticated');
+  // Credits are charged inside the Inngest function based on model and token estimates.
+  // Keep this helper for compatibility in case other callers still import it.
+  return;
 }
 
-export async function consumeCredits(){
-    const {userId} = await auth();
+export async function consumeCredits() {
+  const session = await auth();
+  const userId = session?.user?.id;
+  if (!userId) throw new Error('User not authenticated');
 
-    if(!userId) throw new Error("User not authenticated");
-
-    const usageTracker = await getUsageTracker()
-
-    const result = await usageTracker.consume(userId,GENERATION_COST)
-
-    return result;
+  await consumeCreditsForUser(userId);
 }
 
-export async function getUsageStatus(){
-    const {userId} = await auth();
+export async function getUsageStatus() {
+  const session = await auth();
+  const userId = session?.user?.id;
+  if (!userId) throw new Error('User not authenticated');
 
-    if(!userId) throw new Error("User not authenticated");
+  const balance = await getCreditBalance(userId);
 
-    const usageTracker = await getUsageTracker()
+  return {
+    remainingPoints: balance,
+    msBeforeNext: 0,
+    generationCost: MIN_DYNAMIC_GENERATION_CREDITS,
+  };
+}
 
-    const result = await usageTracker.get(userId)
-    return result;
+export function isInsufficientCreditsError(error: unknown): boolean {
+  return error instanceof InsufficientCreditsError;
 }

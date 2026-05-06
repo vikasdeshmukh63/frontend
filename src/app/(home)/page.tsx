@@ -6,17 +6,18 @@ const Page = () => {
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col">
       <section className="space-y-6 py-[16vh] 2xl:py-48">
-        <div className="flex flex-col items-center">
+        <div className="flex items-center justify-center gap-2">
           <Image
             src="/logo.svg"
-            alt="ryzor"
-            width={50}
-            height={50}
+            alt="Fingerchip"
+            width={80}
+            height={80}
             className="hidden md:block"
           />
+          <span className="text-4xl font-bold">Fingerchip</span>
         </div>
         <h1 className="text-center text-2xl font-bold md:text-5xl">
-          Build Something with Ryzor
+          Build Something with Fingerchip
         </h1>
         <p className="text-muted-foreground text-center text-lg md:text-xl">
           Create apps and websites by chatting with AI

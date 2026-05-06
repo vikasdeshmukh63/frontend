@@ -13,9 +13,12 @@ import { toast } from 'sonner';
 import { ChatAiSettingsButton } from '@/components/chat/chat-ai-settings';
 import { Usage } from './usage';
 import { useRouter } from 'next/navigation';
+import { useEffect, useRef } from 'react';
 
 interface Props {
   projectId: string;
+  prefillValue?: string | null;
+  onPrefillConsumed?: () => void;
 }
 
 const formSchema = z.object({
@@ -25,7 +28,7 @@ const formSchema = z.object({
     .max(10000, { message: 'Value is too long' }),
 });
 
-export const MessageForm = ({ projectId }: Props) => {
+export const MessageForm = ({ projectId, prefillValue, onPrefillConsumed }: Props) => {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
 
@@ -39,6 +42,17 @@ export const MessageForm = ({ projectId }: Props) => {
       value: '',
     },
   });
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const v = (prefillValue ?? '').trim();
+    if (!v) return;
+    form.setValue('value', v, { shouldValidate: true, shouldDirty: true });
+    // Focus for quick edit + regenerate
+    setTimeout(() => textareaRef.current?.focus(), 0);
+    onPrefillConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillValue]);
 
   const createMessage = useMutation(
     trpc.messages.create.mutationOptions({
@@ -74,7 +88,13 @@ export const MessageForm = ({ projectId }: Props) => {
 
   return (
     <Form {...form}>
-      {showUsage && <Usage points={usage.remainingPoints} msBeforeNext={usage.msBeforeNext}/>}
+      {showUsage && (
+        <Usage
+          points={usage.remainingPoints}
+          msBeforeNext={usage.msBeforeNext}
+          generationCost={usage.generationCost}
+        />
+      )}
       <form
         onSubmit={form.handleSubmit(onSubmit)}
         className={cn(
@@ -90,6 +110,11 @@ export const MessageForm = ({ projectId }: Props) => {
             return (
               <TextareaAutosize
                 {...field}
+                ref={(el) => {
+                  // keep RHF ref and local ref
+                  field.ref(el);
+                  textareaRef.current = el;
+                }}
                 disabled={isPending}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}

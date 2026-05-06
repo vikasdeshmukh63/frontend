@@ -18,9 +18,9 @@ function schemaDelegateOk(client: PrismaClient | undefined): boolean {
   return (
     typeof (
       client as unknown as {
-        userAiSettings?: { upsert: (...args: unknown[]) => Promise<unknown> };
+        user?: { findUnique: (...args: unknown[]) => Promise<unknown> };
       }
-    ).userAiSettings?.upsert === 'function'
+    ).user?.findUnique === 'function'
   );
 }
 
@@ -39,7 +39,7 @@ function getSingletonPrismaClient(): PrismaClient {
   const created = createPrismaClient();
   if (!schemaDelegateOk(created)) {
     throw new Error(
-      'Prisma Client is outdated (missing UserAiSettings). Run `npx prisma generate` and restart the dev server.'
+      'Prisma Client is outdated (missing User model). Run `npx prisma generate` and restart the dev server.'
     );
   }
 

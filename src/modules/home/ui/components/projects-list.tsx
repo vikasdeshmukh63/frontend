@@ -2,24 +2,27 @@
 
 import { Button } from '@/components/ui/button';
 import { useTRPC } from '@/trpc/client';
-import { useUser } from '@clerk/nextjs';
 import { useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
 import Image from 'next/image';
 import Link from 'next/link';
+import { useSession } from 'next-auth/react';
 
 export const ProjectsList = () => {
   const trpc = useTRPC();
-  const {user} = useUser()
+  const { data: session, status } = useSession();
   const { data: projects } = useQuery(trpc.projects.getMany.queryOptions());
 
-  if(!user){
-    return null
+  if (status !== 'authenticated' || !session?.user) {
+    return null;
   }
+
+  const displayName =
+    session.user.name ?? session.user.email?.split('@')[0] ?? 'Your';
 
   return (
     <div className="dark:bg-sidebar flex w-full flex-col gap-y-6 rounded-xl border bg-white p-8 sm:gap-y-4">
-      <h2 className="text-2xl font-semibold">{user?.firstName}&apos;s Vibes</h2>
+      <h2 className="text-2xl font-semibold">{displayName}&apos;s Vibes</h2>
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-3">
         {projects?.length === 0 && (
           <div className="col-span-full text-center">
@@ -37,7 +40,7 @@ export const ProjectsList = () => {
               <div className="flex items-center gap-x-4">
                 <Image
                   src="/logo.svg"
-                  alt="Ryzor"
+                  alt="Fingerchip"
                   width={32}
                   height={32}
                   className="object-contain"

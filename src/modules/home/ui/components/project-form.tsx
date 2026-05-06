@@ -15,7 +15,6 @@ import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
 import { PROJECT_TEMPLATES } from '../../constants';
 import { ChatAiSettingsButton } from '@/components/chat/chat-ai-settings';
-import { useClerk } from '@clerk/nextjs';
 
 const formSchema = z.object({
   value: z
@@ -27,7 +26,6 @@ const formSchema = z.object({
 export const ProjectForm = () => {
   const router = useRouter();
   const trpc = useTRPC();
-  const clerk = useClerk();
   const queryClient = useQueryClient();
 
   const form = useForm<z.infer<typeof formSchema>>({
@@ -46,12 +44,12 @@ export const ProjectForm = () => {
       },
       onError: (error) => {
         toast.error(error.message || 'Something went wrong');
-        
+
         if (error.data?.code === 'UNAUTHORIZED') {
-          clerk.openSignIn();
+          router.push('/sign-in');
         }
-        if(error.data?.code === "TOO_MANY_REQUESTS"){
-          router.push("/pricing")
+        if (error.data?.code === 'TOO_MANY_REQUESTS') {
+          router.push('/pricing');
         }
       },
     })

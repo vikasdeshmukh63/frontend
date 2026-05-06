@@ -30,7 +30,14 @@ import {
   resolveOrCreateSandboxId,
   syncGraphifyArtifactsToSandbox,
   syncSandboxFilesFromMap,
+  snapshotSandboxProjectFiles,
 } from '@/inngest/project-sandbox';
+import {
+  consumeCreditsAmount,
+  InsufficientCreditsError,
+  refundFailedGenerationCredits,
+} from '@/lib/credit-service';
+import { estimateGenerationCredits } from '@/lib/credit-pricing';
 
 interface AgentState {
   summary: string;
@@ -65,12 +72,73 @@ function isProviderInvalidMessageError(error: unknown): boolean {
   );
 }
 
+const MAX_FUNCTION_RETRIES = 3 as const;
+
 export const codeAgentFunction = inngest.createFunction(
-  { id: 'code-agent-v2', triggers: [{ event: 'code-agent/run' }] },
+  {
+    id: 'code-agent-v3',
+    triggers: [{ event: 'code-agent/run' }],
+    /** Stop after this many retries (Inngest default is 3; set explicitly so runs do not loop indefinitely). */
+    retries: MAX_FUNCTION_RETRIES,
+    onFailure: async ({ error, event, step }) => {
+      const original = event.data.event as {
+        id?: string;
+        data?: {
+          projectId?: string;
+          userId?: string;
+        };
+      };
+      const triggerEventId =
+        typeof original?.id === 'string' ? original.id : undefined;
+      const projectId = original?.data?.projectId;
+      const userId = original?.data?.userId;
+      const runId = event.data.run_id;
+
+      await step.run('generation-failed-finalize', async () => {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        console.error(
+          `[code-agent] Job exhausted retries (run ${runId}):`,
+          errMsg
+        );
+
+        if (userId) {
+          try {
+            await refundFailedGenerationCredits({
+              userId,
+              chargeCorrelationId: triggerEventId
+                ? `inngest_gen_charge:${triggerEventId}`
+                : `inngest_gen_charge_fallback:${runId}`,
+              correlationId: `inngest_gen_fail:${runId}`,
+              metadata: { inngestRunId: runId, projectId },
+            });
+          } catch (e) {
+            console.error('[code-agent] Credit refund failed:', e);
+          }
+        }
+
+        if (projectId) {
+          await prisma.message.create({
+            data: {
+              projectId,
+              content:
+                'This generation stopped after several failed attempts. The credits for this message have been returned to your balance. You can try again in a moment.',
+              role: 'ASSISTANT',
+              type: 'ERROR',
+            },
+          });
+        }
+      });
+    },
+  },
   async ({ event, step }) => {
     const normalizedPrompt = normalizePromptInput(event.data.value);
     const userId =
       typeof event.data.userId === 'string' ? event.data.userId : undefined;
+    const forceNewSession = event.data.newSession === true;
+    const chargeCorrelationId =
+      typeof event.id === 'string'
+        ? `inngest_gen_charge:${event.id}`
+        : `inngest_gen_charge_fallback:${event.data.projectId}:${Date.now()}`;
 
     const aiConfig = await step.run('load-ai-settings', async () => {
       return getUserAiRuntimeConfig(userId);
@@ -94,7 +162,7 @@ export const codeAgentFunction = inngest.createFunction(
         const initialFiles =
           await loadInitialAgentFilesFromLatestFragment(projectId);
 
-        const sandboxId = await resolveOrCreateSandboxId(projectId);
+        const sandboxId = await resolveOrCreateSandboxId(projectId, forceNewSession);
 
         await prisma.project.update({
           where: { id: projectId },
@@ -296,6 +364,64 @@ export const codeAgentFunction = inngest.createFunction(
         })
       );
 
+      const creditReservation = await step.run(
+        'reserve-generation-credits',
+        async () => {
+          if (!userId) return { ok: true as const, chargedCredits: 0 };
+
+          const pricing = estimateGenerationCredits({
+            provider: aiConfig.provider,
+            model: aiConfig.apiModel,
+            estimatedInputTokens,
+          });
+
+          try {
+            await consumeCreditsAmount(userId, {
+              amount: pricing.credits,
+              reason: 'generation_dynamic',
+              correlationId: chargeCorrelationId,
+              metadata: {
+                provider: aiConfig.provider,
+                model: aiConfig.apiModel,
+                estimatedCostUsd: pricing.estimatedCostUsd,
+                estimatedRevenueUsd: pricing.estimatedRevenueUsd,
+                targetMargin: pricing.margin,
+                estimatedInputTokens: pricing.estimatedInputTokens,
+                estimatedOutputTokens: pricing.estimatedOutputTokens,
+              },
+            });
+            return { ok: true as const, chargedCredits: pricing.credits };
+          } catch (error) {
+            if (error instanceof InsufficientCreditsError) {
+              await prisma.message.create({
+                data: {
+                  projectId: event.data.projectId,
+                  content: `Not enough credits for this request. This run needs about ${pricing.credits} credits based on the selected model. Please buy more credits or switch to a lower-cost model.`,
+                  role: 'ASSISTANT',
+                  type: 'ERROR',
+                },
+              });
+              return {
+                ok: false as const,
+                chargedCredits: 0,
+                requiredCredits: pricing.credits,
+              };
+            }
+            throw error;
+          }
+        }
+      );
+      if (!creditReservation.ok) {
+        return {
+          url: '',
+          title: '',
+          files: {},
+          summary: '',
+          insufficientCredits: true as const,
+          requiredCredits: creditReservation.requiredCredits,
+        };
+      }
+
       runSuccess = await (async () => {
         const runInput = `${normalizedPrompt}
 
@@ -420,6 +546,13 @@ ${graphContext}
         });
       }
 
+      const sandboxFiles = await snapshotSandboxProjectFiles(sandboxId);
+      const mergedFiles = {
+        ...allFiles,
+        ...(result.state.data.files || {}),
+        ...sandboxFiles,
+      };
+
       return prisma.message.create({
         data: {
           projectId: event.data.projectId,
@@ -430,10 +563,7 @@ ${graphContext}
             create: {
               sandboxUrl,
               title: fragmentTitle,
-              files: {
-                ...allFiles,
-                ...(result.state.data.files || {}),
-              },
+              files: mergedFiles,
             },
           },
         },

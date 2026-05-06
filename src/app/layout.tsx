@@ -5,7 +5,7 @@ import './globals.css';
 import { TRPCReactProvider } from '@/trpc/client';
 import { Toaster } from '@/components/ui/sonner';
 import { ThemeProvider } from 'next-themes';
-import { ClerkProvider } from '@clerk/nextjs';
+import { AuthSessionProvider } from '@/components/providers/auth-session-provider';
 
 export const metadata: Metadata = {
   title: 'Create Next App',
@@ -18,7 +18,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <ClerkProvider>
+    <AuthSessionProvider>
       <TRPCReactProvider>
         <html lang="en" suppressHydrationWarning>
           <body
@@ -36,6 +36,6 @@ export default function RootLayout({
           </body>
         </html>
       </TRPCReactProvider>
-    </ClerkProvider>
+    </AuthSessionProvider>
   );
 }

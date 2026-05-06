@@ -24,14 +24,15 @@ function fragmentFilesToRecord(files: unknown): Record<string, string> {
  * Reconnects to the project's sandbox when still alive; otherwise creates a new one.
  */
 export async function resolveOrCreateSandboxId(
-  projectId: string
+  projectId: string,
+  forceNew = false
 ): Promise<string> {
   const project = await prisma.project.findUnique({
     where: { id: projectId },
     select: { e2bSandboxId: true },
   });
 
-  if (project?.e2bSandboxId) {
+  if (!forceNew && project?.e2bSandboxId) {
     try {
       const sandbox = await Sandbox.connect(project.e2bSandboxId);
       await sandbox.setTimeout(SANDBOX_TIMEOUT);
@@ -264,4 +265,100 @@ export async function syncGraphifyArtifactsToSandbox(
   );
 
   return { context, selectedFiles };
+}
+
+export async function snapshotSandboxProjectFiles(
+  sandboxId: string
+): Promise<Record<string, string>> {
+  const sandbox = await Sandbox.connect(sandboxId);
+  await sandbox.setTimeout(SANDBOX_TIMEOUT);
+
+  const script = String.raw`
+import json
+from pathlib import Path
+
+root = Path('/home/user')
+allow_dirs = ['app', 'src', 'public', 'prisma']
+allow_files = {
+  'package.json',
+  'next.config.ts',
+  'next.config.js',
+  'tsconfig.json',
+  'postcss.config.mjs',
+  'tailwind.config.ts',
+  'tailwind.config.js',
+  'components.json',
+}
+ignore_parts = {'node_modules', '.next', '.git', '.turbo'}
+max_bytes = 200_000
+
+out = {}
+
+for d in allow_dirs:
+  base = root / d
+  if not base.exists():
+    continue
+  for p in base.rglob('*'):
+    if not p.is_file():
+      continue
+    rel = p.relative_to(root).as_posix()
+    parts = set(rel.split('/'))
+    if ignore_parts & parts:
+      continue
+    try:
+      data = p.read_text(encoding='utf-8')
+      if len(data.encode('utf-8')) <= max_bytes:
+        out[rel] = data
+    except Exception:
+      pass
+
+for f in allow_files:
+  p = root / f
+  if p.exists() and p.is_file():
+    try:
+      data = p.read_text(encoding='utf-8')
+      if len(data.encode('utf-8')) <= max_bytes:
+        out[f] = data
+    except Exception:
+      pass
+
+print(json.dumps(out))
+`;
+
+  const command = `
+if command -v python3 >/dev/null 2>&1; then
+python3 - <<'PY'
+${script}
+PY
+elif command -v python >/dev/null 2>&1; then
+python - <<'PY'
+${script}
+PY
+else
+echo '{}'
+fi
+`;
+
+  let raw = '';
+  try {
+    const result = await sandbox.commands.run(command);
+    raw = (result.stdout ?? '').trim();
+  } catch {
+    return {};
+  }
+
+  if (!raw) return {};
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    const clean: Record<string, string> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      if (typeof k === 'string' && typeof v === 'string') {
+        clean[k] = v;
+      }
+    }
+    return clean;
+  } catch {
+    return {};
+  }
 }
