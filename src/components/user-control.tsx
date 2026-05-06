@@ -1,6 +1,7 @@
 'use client';
 
-import { LogOut } from 'lucide-react';
+import { LogOut, UserIcon } from 'lucide-react';
+import Link from 'next/link';
 import { signOut, useSession } from 'next-auth/react';
 
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -61,6 +62,12 @@ const UserControl = ({ showName = true }: Props) => {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuItem asChild>
+          <Link href="/profile" className="cursor-pointer">
+            <UserIcon className="mr-2 size-4" />
+            Profile
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem
           className="cursor-pointer"
           onClick={() => signOut({ callbackUrl: '/' })}
