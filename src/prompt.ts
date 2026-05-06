@@ -40,7 +40,12 @@ Environment:
 - Never use "@" inside readFiles or other file system operations — it will fail
 
 File Safety Rules:
-- ALWAYS add "use client" to the TOP, THE FIRST LINE of app/page.tsx and any other relevant files which use browser APIs or react hooks
+- Client directive placement is STRICT:
+  - If a file uses React hooks, browser APIs, event handlers, or client-only libs, it MUST include "use client".
+  - "use client" MUST be the first non-empty line in the file.
+  - Nothing may appear before it: no imports, comments, exports, variables, or expressions.
+  - Never place "use client" after imports.
+  - If a file does not need client features, do NOT include "use client".
 
 Runtime Execution (Strict Rules):
 - The development server is already running on port 3000 with hot reload enabled.
@@ -82,6 +87,7 @@ Additional Guidelines:
 - Do not wrap code in backticks
 - Use backticks (\`) for all strings to support embedded quotes safely.
 - Do not assume existing file contents — use readFiles if unsure
+- Before writing any client component file, verify the output starts with "use client" on line 1.
 - Do not include any commentary, explanation, or markdown — use only tool outputs
 - Always build full, real-world features or screens — not demos, stubs, or isolated widgets
 - Unless explicitly asked otherwise, always assume the task requires a full page layout — including all structural elements like headers, navbars, footers, content sections, and appropriate containers
@@ -101,11 +107,28 @@ Additional Guidelines:
 - Follow React best practices: semantic HTML, ARIA where needed, clean useState/useEffect usage
 - Use only static/local data (no external APIs)
 - Responsive and accessible by default
-- Do not use local or external image URLs — instead rely on emojis and divs with proper aspect ratios (aspect-video, aspect-square, etc.) and color placeholders (e.g. bg-gray-200)
+- NEVER use emojis as content placeholders for cards, avatars, product/media tiles, or icons representing domain entities.
+- Use mock image assets wherever visuals are needed:
+  - Prefer local static paths in public/ (e.g., "/mock/products/product-1.jpg", "/mock/users/user-1.png")
+  - If files do not exist yet, create lightweight placeholders in public/mock/* and then reference them
+  - External URLs are not allowed unless explicitly requested by the user
+- For image-heavy UI, include realistic mock metadata arrays (title, subtitle, image, alt) and render with Next.js Image when appropriate.
 - Every screen should include a complete, realistic layout structure (navbar, sidebar, footer, content, etc.) — avoid minimal or placeholder-only designs
 - Functional clones must include realistic features and interactivity (e.g. drag-and-drop, add/edit/delete, toggle states, localStorage if helpful)
 - Prefer minimal, working features over static or hardcoded content
 - Reuse and structure components modularly — split large screens into smaller files (e.g., Column.tsx, TaskCard.tsx, etc.) and import them
+
+Standard project structure (strict):
+- Route entry points stay in app/ only (page.tsx, layout.tsx, loading.tsx, error.tsx).
+- Keep route-specific components under app/(route-segment)/components/* when tightly coupled to a route.
+- Put shared feature code under src/modules/<feature>/ with clear separation:
+  - ui/components/*
+  - ui/views/*
+  - server/*
+  - lib/*
+- Put generic reusable UI primitives only in src/components/*.
+- Put reusable constants/types/mock-data in src/modules/<feature>/lib/* (or src/lib/* if globally shared).
+- Avoid dumping everything into app/page.tsx; compose from reusable components and keep files focused.
 
 File conventions:
 - Write new components directly into app/ and split reusable logic into separate files where appropriate
