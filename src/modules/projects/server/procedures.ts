@@ -1,8 +1,14 @@
 import { inngest } from '@/inngest/client';
+import {
+  loadInitialAgentFilesFromLatestFragment,
+  resolveOrCreateSandboxId,
+  syncSandboxFilesFromMap,
+} from '@/inngest/project-sandbox';
 import { prisma } from '@/lib/db';
 import { toAppTrpcError } from '@/lib/prisma-errors';
 import { protectedProcedure, createTRPCRouter } from '@/trpc/init';
 import { TRPCError } from '@trpc/server';
+import { Sandbox } from '@e2b/code-interpreter';
 import { generateSlug } from 'random-word-slugs';
 import z from 'zod';
 
@@ -17,7 +23,7 @@ export const projectsRouter = createTRPCRouter({
       const existingProject = await prisma.project.findUnique({
         where: {
           id: input.id,
-          userId:ctx.auth.userId
+          userId: ctx.auth.userId,
         },
       });
 
@@ -28,7 +34,44 @@ export const projectsRouter = createTRPCRouter({
         });
       }
 
-      return existingProject;
+      try {
+        const previousSandboxId = existingProject.e2bSandboxId ?? null;
+        const nextSandboxId = await resolveOrCreateSandboxId(existingProject.id);
+        const sandboxWasRecreated = !previousSandboxId || previousSandboxId !== nextSandboxId;
+
+        if (sandboxWasRecreated) {
+          const latestFiles = await loadInitialAgentFilesFromLatestFragment(
+            existingProject.id
+          );
+          await syncSandboxFilesFromMap(nextSandboxId, latestFiles);
+        }
+
+        const sandbox = await Sandbox.connect(nextSandboxId);
+        const sandboxUrl = `https://${sandbox.getHost(3000)}`;
+
+        await prisma.$transaction([
+          prisma.project.update({
+            where: { id: existingProject.id },
+            data: { e2bSandboxId: nextSandboxId },
+          }),
+          prisma.fragment.updateMany({
+            where: {
+              message: {
+                projectId: existingProject.id,
+              },
+            },
+            data: { sandboxUrl },
+          }),
+        ]);
+
+        return {
+          ...existingProject,
+          e2bSandboxId: nextSandboxId,
+        };
+      } catch (error) {
+        console.error('Failed to revive project sandbox:', error);
+        return existingProject;
+      }
     }),
   getMany: protectedProcedure.query(async ({ ctx }) => {
     const projects = await prisma.project.findMany({
