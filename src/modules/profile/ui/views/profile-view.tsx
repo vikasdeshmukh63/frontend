@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useSession } from 'next-auth/react';
+import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { ChatAiSettingsButton } from '@/components/chat/chat-ai-settings';
@@ -25,6 +27,8 @@ function initials(name?: string | null, email?: string | null) {
 export default function ProfileView() {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
+  const { update: updateSession } = useSession();
+  const router = useRouter();
   const { data: profile, isLoading: profileLoading } = useQuery(
     trpc.profile.get.queryOptions()
   );
@@ -41,9 +45,22 @@ export default function ProfileView() {
 
   const updateProfile = useMutation(
     trpc.profile.update.mutationOptions({
-      onSuccess: async () => {
+      onSuccess: async (updatedProfile) => {
+        queryClient.setQueryData(
+          trpc.profile.get.queryKey(),
+          updatedProfile
+        );
+        await updateSession({
+          name: updatedProfile.name,
+          image: updatedProfile.image,
+        });
         toast.success('Profile updated');
         await queryClient.invalidateQueries(trpc.profile.get.queryOptions());
+        await queryClient.refetchQueries({
+          queryKey: trpc.profile.get.queryKey(),
+          exact: true,
+        });
+        router.refresh();
       },
       onError: (error) => toast.error(error.message || 'Failed to update profile'),
     })

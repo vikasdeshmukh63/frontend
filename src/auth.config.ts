@@ -71,18 +71,30 @@ export const authConfig = {
       }
       return !!auth?.user;
     },
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger, session }) {
       if (user) {
         token.sub = user.id;
         token.email = user.email;
         token.name = user.name;
         token.picture = user.image;
       }
+
+      if (trigger === 'update' && session) {
+        if (typeof session.name === 'string') {
+          token.name = session.name;
+        }
+        if (typeof session.image === 'string' || session.image === null) {
+          token.picture = session.image ?? null;
+        }
+      }
       return token;
     },
     async session({ session, token }) {
       if (session.user && token.sub) {
         session.user.id = token.sub;
+        session.user.name = typeof token.name === 'string' ? token.name : null;
+        session.user.email = typeof token.email === 'string' ? token.email : null;
+        session.user.image = typeof token.picture === 'string' ? token.picture : null;
       }
       return session;
     },
