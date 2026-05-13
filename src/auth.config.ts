@@ -91,10 +91,16 @@ export const authConfig = {
     },
     async session({ session, token }) {
       if (session.user && token.sub) {
-        session.user.id = token.sub;
-        session.user.name = typeof token.name === 'string' ? token.name : null;
-        session.user.email = typeof token.email === 'string' ? token.email : null;
-        session.user.image = typeof token.picture === 'string' ? token.picture : null;
+        const user = session.user as {
+          id: string;
+          name: string | null;
+          email: string | null;
+          image: string | null;
+        };
+        user.id = token.sub;
+        user.name = typeof token.name === 'string' ? token.name : null;
+        user.email = typeof token.email === 'string' ? token.email : null;
+        user.image = typeof token.picture === 'string' ? token.picture : null;
       }
       return session;
     },

@@ -47,4 +47,17 @@ function getSingletonPrismaClient(): PrismaClient {
   return created;
 }
 
-export const prisma = getSingletonPrismaClient();
+/**
+ * Lazily connects on first use so `import "@/lib/db"` during `next build` does not
+ * require DATABASE_URL until a query actually runs.
+ */
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop, receiver) {
+    const client = getSingletonPrismaClient();
+    const value = Reflect.get(client, prop, receiver) as unknown;
+    if (typeof value === 'function') {
+      return (value as (...args: unknown[]) => unknown).bind(client);
+    }
+    return value;
+  },
+});

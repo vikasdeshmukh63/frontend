@@ -81,7 +81,6 @@ const ProjectView = ({ projectId }: Props) => {
             <Suspense fallback={<p>Loading Messages...</p>}>
               <MessagesContainer
                 projectId={projectId}
-                activeFragment={activeFragment}
                 setActiveFragment={setActiveFragment}
               />
             </Suspense>

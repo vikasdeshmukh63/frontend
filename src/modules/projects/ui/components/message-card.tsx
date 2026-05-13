@@ -234,7 +234,6 @@ const AssistantMessage = ({
 };
 
 interface MessageCardProps {
-  messageId: string;
   content: string;
   role: MessageRole;
   fragment: Fragment | null;
@@ -255,7 +254,6 @@ interface MessageCardProps {
 }
 
 const MessageCard = ({
-  messageId: _messageId,
   content,
   role,
   fragment,

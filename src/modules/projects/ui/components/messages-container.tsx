@@ -11,15 +11,10 @@ import { isProjectNotificationMessage } from '@/modules/projects/lib/message-not
 
 interface Props {
   projectId: string;
-  activeFragment: Fragment | null;
   setActiveFragment: (fragment: Fragment | null) => void;
 }
 
-const MessagesContainer = ({
-  projectId,
-  activeFragment,
-  setActiveFragment,
-}: Props) => {
+const MessagesContainer = ({ projectId, setActiveFragment }: Props) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastAssistantMessageIdRef = useRef<string | null>(null);
   const trpc = useTRPC();
@@ -93,7 +88,6 @@ const MessagesContainer = ({
             return (
               <MessageCard
                 key={message.id}
-                messageId={message.id}
                 content={message.content}
                 role={message.role}
                 fragment={message.fragment}
