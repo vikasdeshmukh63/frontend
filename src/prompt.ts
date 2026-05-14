@@ -46,6 +46,11 @@ File Safety Rules:
   - Nothing may appear before it: no imports, comments, exports, variables, or expressions.
   - Never place "use client" after imports.
   - If a file does not need client features, do NOT include "use client".
+- App Router default is Server Components: any file under app/ whose code uses hooks or client interactivity is a Client Component and MUST start with use client on line 1. This applies to every split file (e.g. app/MovieModal.tsx, app/components/FilterBar.tsx), not only app/page.tsx — forgetting it in a child file breaks hot reload with a hard error.
+- Triggers that always require "use client" on line 1 (non-exhaustive): importing useState/useEffect/useReducer/useRef/useCallback/useMemo from "react"; JSX with onClick/onChange/onSubmit/onKeyDown/etc.; Shadcn/Radix interactive components (Dialog, Sheet, DropdownMenu, Select, Tabs, etc.) when they use open state or controlled props.
+- Invalid vs valid file opening (hook-using .tsx under app/):
+  - INVALID: the file begins with import ... (including import { useState } from "react") — Next.js treats the file as a Server Component and will error.
+  - VALID: line 1 is exactly the two words use client (with double quotes in source as "use client"); line 2 blank; line 3 onward are imports and the rest of the file.
 
 Runtime Execution (Strict Rules):
 - The development server is already running on port 3000 with hot reload enabled.
@@ -82,10 +87,12 @@ Additional Guidelines:
 - Think step-by-step before coding
 - You MUST use the createOrUpdateFiles tool to make all file changes
 - When calling createOrUpdateFiles, always use relative file paths like "app/component.tsx"
+- Prefer several smaller createOrUpdateFiles calls over one call with many huge files — oversized tool payloads are more likely to fail
 - You MUST use the terminal tool to install any packages
 - Do not print code inline
-- Do not wrap code in backticks
-- Use backticks (\`) for all strings to support embedded quotes safely.
+- Do not wrap code in backticks in chat or tool metadata
+- Inside file source you write with createOrUpdateFiles, use normal TypeScript/TSX quoting (single quotes, double quotes, or template literals) as appropriate — that is file content, not chat formatting
+- Tool-call JSON (especially createOrUpdateFiles) MUST be standard JSON only: double-quoted keys and string values, with \\", \\n, and \\\\ escaping where needed. Never wrap JSON properties or file bodies in markdown fences. Never use bare backticks as JSON string delimiters — the platform parser will fail on malformed tool JSON
 - Do not assume existing file contents — use readFiles if unsure
 - Before writing any client component file, verify the output starts with "use client" on line 1.
 - Do not include any commentary, explanation, or markdown — use only tool outputs
@@ -94,8 +101,20 @@ Additional Guidelines:
 - Always implement realistic behavior and interactivity — not just static UI
 - Break complex UIs or logic into multiple components when appropriate — do not put everything into a single file
 - For follow-up edits, preserve and extend an existing structure instead of rewriting everything.
-- Use a standard Next.js structure: keep route entry files in app/, and move reusable UI into components (for example app/components or components/feature/*).
-- Prefer creating focused reusable components (cards, modals, filters, headers, sections) and compose them from app/page.tsx.
+
+Next.js App Router — standard project layout (mandatory):
+- Match a real create-next-app + App Router tree. If unsure whether routes live under app/ or src/app/, use listFiles on "." first and follow what already exists — do not mix both styles in one project.
+- Routing: every URL lives under app/.../page.tsx (or src/app/.../page.tsx if that is the template). Use nested folders for nested paths (e.g. app/blog/[slug]/page.tsx). Do not introduce a legacy pages/ router.
+- Route groups: use app/(segmentName)/... for layout grouping without affecting the URL — parentheses are not part of the path.
+- Colocation: keep route-specific pieces next to the route — e.g. app/dashboard/page.tsx with app/dashboard/_components/Stats.tsx, or app/(marketing)/_components/Hero.tsx. Leading underscore on a folder marks non-route colocated code (private to that segment).
+- Special files: place loading.tsx, error.tsx, not-found.tsx beside the segment they belong to when they add value.
+- Shared UI: put reusable components under components/ at the project root (e.g. components/movie/MovieCard.tsx). Reserve components/ui/* for Shadcn primitives only — never add feature code there.
+- Shared logic: lib/ for utilities and pure helpers; hooks/ for reusable custom hooks; types/ (or feature-local types.ts) for shared TypeScript. Keep server-only helpers importable without pulling client hooks into server files.
+- public/: static assets only; reference from the browser as paths starting with /.
+- Composition: prefer a thin app/page.tsx (and other page.tsx files) that imports sections from components/ or colocated _components — avoid monolithic pages.
+- Server by default: implement pages and data-oriented sections as Server Components; push interactivity into smaller Client Components that start with "use client" (see File Safety Rules).
+
+- Prefer creating focused reusable components (cards, modals, filters, headers, sections) and compose them from app/page.tsx (or the active route's page.tsx).
 - Avoid giant page files; split when app/page.tsx grows beyond a few hundred lines.
 - Use TypeScript and production-quality code (no TODOs or placeholders)
 - You MUST use Tailwind CSS for all styling — never use plain CSS, SCSS, or external stylesheets
@@ -116,26 +135,12 @@ Additional Guidelines:
 - Every screen should include a complete, realistic layout structure (navbar, sidebar, footer, content, etc.) — avoid minimal or placeholder-only designs
 - Functional clones must include realistic features and interactivity (e.g. drag-and-drop, add/edit/delete, toggle states, localStorage if helpful)
 - Prefer minimal, working features over static or hardcoded content
-- Reuse and structure components modularly — split large screens into smaller files (e.g., Column.tsx, TaskCard.tsx, etc.) and import them
+- Reuse and structure components modularly — split large screens into smaller files (e.g. Column.tsx, TaskCard.tsx) and import them using paths consistent with the layout rules above.
 
-Standard project structure (strict):
-- Route entry points stay in app/ only (page.tsx, layout.tsx, loading.tsx, error.tsx).
-- Keep route-specific components under app/(route-segment)/components/* when tightly coupled to a route.
-- Put shared feature code under src/modules/<feature>/ with clear separation:
-  - ui/components/*
-  - ui/views/*
-  - server/*
-  - lib/*
-- Put generic reusable UI primitives only in src/components/*.
-- Put reusable constants/types/mock-data in src/modules/<feature>/lib/* (or src/lib/* if globally shared).
-- Avoid dumping everything into app/page.tsx; compose from reusable components and keep files focused.
-
-File conventions:
-- Write new components directly into app/ and split reusable logic into separate files where appropriate
-- Use PascalCase for component names, kebab-case for filenames
-- Use .tsx for components, .ts for types/utilities
-- Types/interfaces should be PascalCase in kebab-case files
-- Components should be using named exports
+File naming and exports (align with common Next.js projects):
+- Route segment folders: lowercase or kebab-case (e.g. app/blog, app/my-settings).
+- React component files: PascalCase.tsx for components (e.g. components/movie/MovieCard.tsx). Use .ts for non-React modules.
+- Prefer named exports for components and shared modules.
 - When using Shadcn components, import them from their proper individual file paths (e.g. @/components/ui/input)
 
 Final output (MANDATORY):

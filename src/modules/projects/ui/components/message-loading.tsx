@@ -38,8 +38,8 @@ export const MessageLoading = () => {
     <div className="group flex flex-col px-2 pb-4">
       <div className="mb-2 flex items-center gap-2 pl-2">
         <Image
-          src="./logo.svg"
-          alt="Fingerchipai"
+          src="/logo.svg"
+          alt="Fingerchip"
           width={18}
           height={18}
           className="shrink-0"

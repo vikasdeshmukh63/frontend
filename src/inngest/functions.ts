@@ -60,6 +60,11 @@ function normalizePromptInput(value: unknown): string {
   return 'Build or update the project based on the latest requested change.';
 }
 
+function isAgentKitToolArgumentsParseError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.message.includes('Failed to parse JSON with backticks');
+}
+
 function isProviderInvalidMessageError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
   const asObj = error as Record<string, unknown>;
@@ -137,7 +142,7 @@ export const codeAgentFunction = inngest.createFunction(
       });
     },
   },
-  async ({ event, step }) => {
+  async ({ event, step, runId }) => {
     const preloadContextFiles = shouldPreloadContextFiles();
     const normalizedPrompt = normalizePromptInput(event.data.value);
     const userId =
@@ -270,8 +275,14 @@ export const codeAgentFunction = inngest.createFunction(
           parameters: z.object({
             files: z.array(
               z.object({
-                path: z.string(),
-                content: z.string(),
+                path: z
+                  .string()
+                  .describe('Relative path only, e.g. app/page.tsx'),
+                content: z
+                  .string()
+                  .describe(
+                    'Raw file text as a normal JSON string (escape quotes and newlines per JSON). Never wrap this value in markdown fences or use backticks as JSON delimiters.'
+                  ),
               })
             ),
           }),
@@ -548,6 +559,41 @@ ${graphContext}
           files: {},
           summary: '',
           invalidRequest: true as const,
+        };
+      }
+      if (isAgentKitToolArgumentsParseError(err)) {
+        await step.run('save-tool-arguments-parse-error', async () => {
+          if (userId) {
+            try {
+              await refundFailedGenerationCredits({
+                userId,
+                chargeCorrelationId,
+                correlationId: `inngest_gen_tooljson_refund:${runId}`,
+                metadata: {
+                  inngestRunId: runId,
+                  projectId: event.data.projectId,
+                },
+              });
+            } catch (e) {
+              console.error('[code-agent] Credit refund failed:', e);
+            }
+          }
+          return prisma.message.create({
+            data: {
+              projectId: event.data.projectId,
+              content:
+                'The assistant returned invalid data while updating files (this often happens with very large single edits). Your credits have been returned. Please try again — use a smaller prompt or ask for fewer files at once.',
+              role: 'ASSISTANT',
+              type: 'ERROR',
+            },
+          });
+        });
+        return {
+          url: '',
+          title: '',
+          files: {},
+          summary: '',
+          toolArgumentsParseError: true as const,
         };
       }
       throw err;
