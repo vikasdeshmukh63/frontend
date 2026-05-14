@@ -5,6 +5,13 @@ import Google from 'next-auth/providers/google';
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
+console.log({
+  GOOGLE_CLIENT_ID: !!process.env.GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET: !!process.env.GOOGLE_CLIENT_SECRET,
+  NEXTAUTH_SECRET: !!process.env.NEXTAUTH_SECRET,
+  NEXTAUTH_URL: process.env.NEXTAUTH_URL,
+});
+
 export const authConfig = {
   trustHost: true,
   session: {
