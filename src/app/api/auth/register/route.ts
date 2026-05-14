@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 
+import { Prisma } from '@/generated/prisma/client';
 import { grantCredits, STARTER_CREDITS } from '@/lib/credit-service';
 import { prisma } from '@/lib/db';
 
@@ -49,7 +50,20 @@ export async function POST(req: Request) {
     });
 
     return NextResponse.json({ ok: true });
-  } catch {
+  } catch (error) {
+    console.error('[api/auth/register]', error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError) {
+      console.error('[api/auth/register] prisma', error.code, error.meta);
+      if (error.code === 'P2002') {
+        return NextResponse.json(
+          { error: 'An account with this email already exists' },
+          { status: 409 }
+        );
+      }
+    }
+    if (error instanceof Error) {
+      console.error('[api/auth/register]', error.message);
+    }
     return NextResponse.json({ error: 'Registration failed' }, { status: 500 });
   }
 }
