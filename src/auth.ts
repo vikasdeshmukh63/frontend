@@ -11,12 +11,21 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   events: {
     async createUser({ user }) {
       if (!user.id) return;
-      await grantCredits({
-        userId: user.id,
-        amount: STARTER_CREDITS,
-        reason: 'signup_bonus',
-        metadata: { source: 'oauth_signup' },
-      });
+      try {
+        await grantCredits({
+          userId: user.id,
+          amount: STARTER_CREDITS,
+          reason: 'signup_bonus',
+          metadata: { source: 'oauth_signup' },
+        });
+      } catch (err) {
+        console.error(
+          '[auth] createUser: grantCredits failed (user may exist but starter credits not applied)',
+          { userId: user.id },
+          err,
+        );
+        throw err;
+      }
     },
   },
 });
