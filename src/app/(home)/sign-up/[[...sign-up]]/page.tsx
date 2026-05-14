@@ -30,14 +30,15 @@ type FormValues = z.infer<typeof schema>;
 const Page = () => {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
+  const [registered, setRegistered] = useState(false);
 
-  const { status } = useSession();
+  const { data: session, status } = useSession();
 
   useEffect(() => {
-    if (status === 'authenticated') {
+    if (status === 'authenticated' && session?.user?.emailVerified) {
       router.replace('/');
     }
-  }, [status, router]);
+  }, [status, session, router]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -60,18 +61,27 @@ const Page = () => {
       return;
     }
 
-    const sign = await signIn('credentials', {
-      email: values.email,
-      password: values.password,
-      redirect: false,
-    });
-    if (sign?.error) {
-      setFormError('Account created but sign-in failed. Try signing in.');
-      return;
-    }
-    router.push('/');
-    router.refresh();
+    setRegistered(true);
   };
+
+  if (registered) {
+    return (
+      <div className="mx-auto flex w-full max-w-md flex-col px-4 pt-[16vh] 2xl:pt-48">
+        <section className="space-y-6 rounded-xl border bg-card p-8 shadow-sm">
+          <div className="space-y-2 text-center">
+            <h1 className="text-2xl font-semibold">Check your email</h1>
+            <p className="text-muted-foreground text-sm">
+              We sent a verification link to your address. After you confirm,
+              sign in with your email and password.
+            </p>
+          </div>
+          <Button asChild className="w-full">
+            <Link href="/sign-in">Go to sign in</Link>
+          </Button>
+        </section>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-md flex-col px-4 pt-[16vh] 2xl:pt-48">

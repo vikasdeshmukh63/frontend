@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { Prisma } from '@/generated/prisma/client';
 import { grantCredits, STARTER_CREDITS } from '@/lib/credit-service';
+import { sendEmailVerificationForAddress } from '@/lib/email-verification';
 import { prisma } from '@/lib/db';
 
 const registerSchema = z.object({
@@ -48,6 +49,12 @@ export async function POST(req: Request) {
       reason: 'signup_bonus',
       metadata: { source: 'credentials_signup' },
     });
+
+    try {
+      await sendEmailVerificationForAddress(email);
+    } catch (err) {
+      console.error('[api/auth/register] verification email failed', err);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error) {

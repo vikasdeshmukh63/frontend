@@ -25,6 +25,32 @@ function getTransporter() {
   return cachedTransporter;
 }
 
+export async function sendEmailVerificationEmail(params: {
+  to: string;
+  verifyLink: string;
+}) {
+  const from = process.env.SMTP_FROM ?? process.env.SMTP_USER;
+  if (!from) {
+    throw new Error('SMTP_FROM or SMTP_USER must be set');
+  }
+
+  const transporter = getTransporter();
+
+  await transporter.sendMail({
+    from,
+    to: params.to,
+    subject: 'Verify your Fingerchip email',
+    text: `Confirm your email address by opening this link: ${params.verifyLink}`,
+    html: `
+      <p>Thanks for signing up. Please confirm your email address.</p>
+      <p>
+        <a href="${params.verifyLink}">Verify your email</a>
+      </p>
+      <p>If you did not create an account, you can ignore this message.</p>
+    `,
+  });
+}
+
 export async function sendPasswordResetEmail(params: {
   to: string;
   resetLink: string;

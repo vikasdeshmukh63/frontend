@@ -30,15 +30,16 @@ const Page = () => {
   const router = useRouter();
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get('callbackUrl') ?? '/';
+  const verify = searchParams.get('verify');
   const [formError, setFormError] = useState<string | null>(null);
 
-  const { status } = useSession();
+  const { data: session, status } = useSession();
 
   useEffect(() => {
-    if (status === 'authenticated') {
-      router.replace('/');
+    if (status === 'authenticated' && session?.user?.emailVerified) {
+      router.replace(callbackUrl);
     }
-  }, [status, router]);
+  }, [status, session, router, callbackUrl]);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -72,6 +73,19 @@ const Page = () => {
             Welcome back to Fingerchip
           </p>
         </div>
+
+        {verify === 'success' && (
+          <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-center text-sm text-green-800 dark:border-green-900 dark:bg-green-950 dark:text-green-200">
+            Your email is verified. Sign in to continue.
+          </p>
+        )}
+        {(verify === 'expired' || verify === 'invalid') && (
+          <p className="text-destructive rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-center text-sm">
+            {verify === 'expired'
+              ? 'That verification link has expired. Sign in and resend a new one from the verification page.'
+              : 'That verification link is invalid. Try signing in and resend a verification email.'}
+          </p>
+        )}
 
         {showGoogle && (
           <Button

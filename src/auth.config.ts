@@ -2,6 +2,8 @@ import type { NextAuthConfig } from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
 import Google from 'next-auth/providers/google';
 
+import { authAuthorizedCallback } from '@/lib/auth-authorized-callback';
+
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
 
@@ -84,30 +86,36 @@ export const authConfig = {
     }),
   ],
   callbacks: {
-    authorized({ auth, request }) {
-      const path = request.nextUrl.pathname;
-      if (path.startsWith('/api/auth')) return true;
-      if (path.startsWith('/api/inngest')) return true;
-      if (path.startsWith('/api/trpc')) return true;
-      if (path.startsWith('/api/razorpay/webhook')) return true;
-      if (
-        path === '/' ||
-        path.startsWith('/sign-in') ||
-        path.startsWith('/sign-up') ||
-        path.startsWith('/pricing') ||
-        path.startsWith('/forgot-password')
-      ) {
-        return true;
-      }
-      return !!auth?.user;
-    },
+    authorized: authAuthorizedCallback,
     async jwt({ token, user, trigger, session }) {
       try {
-        if (user) {
+        if (user?.id) {
+          const { prisma } = await import('@/lib/db');
+          const row = await prisma.user.findUnique({
+            where: { id: user.id },
+            select: { emailVerified: true },
+          });
+          token.emailVerified =
+            row?.emailVerified instanceof Date
+              ? row.emailVerified.toISOString()
+              : '';
           token.sub = user.id;
           token.email = user.email;
           token.name = user.name;
           token.picture = user.image;
+        } else if (
+          token.sub &&
+          (token.emailVerified === undefined || trigger === 'update')
+        ) {
+          const { prisma } = await import('@/lib/db');
+          const row = await prisma.user.findUnique({
+            where: { id: token.sub },
+            select: { emailVerified: true },
+          });
+          token.emailVerified =
+            row?.emailVerified instanceof Date
+              ? row.emailVerified.toISOString()
+              : '';
         }
 
         if (trigger === 'update' && session) {
@@ -132,11 +140,17 @@ export const authConfig = {
             name: string | null;
             email: string | null;
             image: string | null;
+            emailVerified: string | null;
           };
           user.id = token.sub;
           user.name = typeof token.name === 'string' ? token.name : null;
           user.email = typeof token.email === 'string' ? token.email : null;
           user.image = typeof token.picture === 'string' ? token.picture : null;
+          user.emailVerified =
+            typeof token.emailVerified === 'string' &&
+            token.emailVerified !== ''
+              ? token.emailVerified
+              : null;
         }
         return session;
       } catch (err) {
