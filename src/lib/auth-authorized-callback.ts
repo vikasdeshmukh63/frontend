@@ -4,8 +4,11 @@ import { NextResponse } from 'next/server';
 function sessionEmailIsVerified(
   emailVerified: string | null | undefined,
 ): boolean {
-  if (emailVerified === undefined) return true;
-  return emailVerified !== null && emailVerified !== '';
+  return (
+    emailVerified !== null &&
+    emailVerified !== undefined &&
+    emailVerified !== ''
+  );
 }
 
 /** Shared by app `auth.config` and Edge middleware (must not import Prisma). */

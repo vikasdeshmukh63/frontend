@@ -3,6 +3,7 @@ import Credentials from 'next-auth/providers/credentials';
 import Google from 'next-auth/providers/google';
 
 import { authAuthorizedCallback } from '@/lib/auth-authorized-callback';
+import { decorateSessionUserFromJwt } from '@/lib/auth-session-user';
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
@@ -134,25 +135,7 @@ export const authConfig = {
     },
     async session({ session, token }) {
       try {
-        if (session.user && token.sub) {
-          const user = session.user as {
-            id: string;
-            name: string | null;
-            email: string | null;
-            image: string | null;
-            emailVerified: string | null;
-          };
-          user.id = token.sub;
-          user.name = typeof token.name === 'string' ? token.name : null;
-          user.email = typeof token.email === 'string' ? token.email : null;
-          user.image = typeof token.picture === 'string' ? token.picture : null;
-          user.emailVerified =
-            typeof token.emailVerified === 'string' &&
-            token.emailVerified !== ''
-              ? token.emailVerified
-              : null;
-        }
-        return session;
+        return decorateSessionUserFromJwt(session, token);
       } catch (err) {
         console.error('[auth] session callback failed', err);
         throw err;

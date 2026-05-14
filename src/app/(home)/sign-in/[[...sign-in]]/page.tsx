@@ -3,7 +3,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { signIn, useSession } from 'next-auth/react';
+import { getSession, signIn, useSession } from 'next-auth/react';
 import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -36,8 +36,11 @@ const Page = () => {
   const { data: session, status } = useSession();
 
   useEffect(() => {
-    if (status === 'authenticated' && session?.user?.emailVerified) {
+    if (status !== 'authenticated' || !session?.user) return;
+    if (session.user.emailVerified) {
       router.replace(callbackUrl);
+    } else {
+      router.replace('/verify-email-pending');
     }
   }, [status, session, router, callbackUrl]);
 
@@ -57,7 +60,12 @@ const Page = () => {
       setFormError('Invalid email or password');
       return;
     }
-    router.push(callbackUrl);
+    const s = await getSession();
+    if (s?.user?.emailVerified) {
+      router.push(callbackUrl);
+    } else {
+      router.push('/verify-email-pending');
+    }
     router.refresh();
   };
 

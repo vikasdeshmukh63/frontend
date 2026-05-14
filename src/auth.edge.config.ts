@@ -2,6 +2,7 @@ import type { NextAuthConfig } from 'next-auth';
 import Google from 'next-auth/providers/google';
 
 import { authAuthorizedCallback } from '@/lib/auth-authorized-callback';
+import { decorateSessionUserFromJwt } from '@/lib/auth-session-user';
 
 const googleConfigured =
   !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET;
@@ -32,5 +33,10 @@ export const authEdgeConfig = {
   ],
   callbacks: {
     authorized: authAuthorizedCallback,
+    /** Keep JWT as stored in the cookie; DB refresh runs in `auth.config` on the Node handler only. */
+    jwt: async ({ token }) => token,
+    async session({ session, token }) {
+      return decorateSessionUserFromJwt(session, token);
+    },
   },
 } satisfies NextAuthConfig;
