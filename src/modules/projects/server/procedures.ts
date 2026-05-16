@@ -1,9 +1,11 @@
 import { inngest } from '@/inngest/client';
 import {
   loadInitialAgentFilesFromLatestFragment,
+  refreshSandboxDevServer,
   resolveOrCreateSandboxId,
   syncSandboxFilesFromMap,
 } from '@/inngest/project-sandbox';
+import { ensureSandboxBootstrapFiles } from '@/inngest/sandbox-bootstrap';
 import { prisma } from '@/lib/db';
 import { toAppTrpcError } from '@/lib/prisma-errors';
 import { protectedProcedure, createTRPCRouter } from '@/trpc/init';
@@ -47,6 +49,8 @@ export const projectsRouter = createTRPCRouter({
         }
 
         const sandbox = await Sandbox.connect(nextSandboxId);
+        await ensureSandboxBootstrapFiles(nextSandboxId);
+        await refreshSandboxDevServer(nextSandboxId);
         const sandboxUrl = `https://${sandbox.getHost(3000)}`;
 
         await prisma.$transaction([

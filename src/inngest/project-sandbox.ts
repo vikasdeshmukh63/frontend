@@ -2,9 +2,17 @@ import { Sandbox } from '@e2b/code-interpreter';
 
 import { prisma } from '@/lib/db';
 import { SANDBOX_TIMEOUT } from '@/inngest/types';
+import {
+  ensureSandboxBootstrapFiles,
+  stripProtectedPathsFromFileMap,
+} from '@/inngest/sandbox-bootstrap';
 
 /** E2B template for the Next.js dev sandbox (unchanged from original flow). */
 const E2B_TEMPLATE_ID = 'vikasdeshmukh63/vibe-nextjs-test1';
+
+/** Next.js app root inside the E2B sandbox (matches template Dockerfile). */
+export const SANDBOX_PROJECT_ROOT = '/home/user';
+
 const GRAPHIFY_DIR = 'graphify-out';
 const GRAPH_JSON_PATH = `${GRAPHIFY_DIR}/graph.json`;
 const GRAPH_REPORT_PATH = `${GRAPHIFY_DIR}/GRAPH_REPORT.md`;
@@ -15,9 +23,58 @@ function fragmentFilesToRecord(files: unknown): Record<string, string> {
   if (!files || typeof files !== 'object' || Array.isArray(files)) return {};
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(files as Record<string, unknown>)) {
-    if (typeof v === 'string') out[k] = v;
+    if (typeof v === 'string') out[normalizeSandboxRelativePath(k)] = v;
   }
   return out;
+}
+
+/** Strip sandbox root / leading slashes so DB + UI use paths like `app/page.tsx`. */
+export function normalizeSandboxRelativePath(path: string): string {
+  let p = path.trim().replace(/\\/g, '/');
+  if (p.startsWith(SANDBOX_PROJECT_ROOT)) {
+    p = p.slice(SANDBOX_PROJECT_ROOT.length);
+  }
+  return p.replace(/^\/+/, '');
+}
+
+/** E2B `files.write` requires absolute paths under the project root. */
+export function toSandboxAbsolutePath(path: string): string {
+  const rel = normalizeSandboxRelativePath(path);
+  return rel ? `${SANDBOX_PROJECT_ROOT}/${rel}` : SANDBOX_PROJECT_ROOT;
+}
+
+export async function writeSandboxProjectFiles(
+  sandboxId: string,
+  files: Array<{ path: string; content: string }>
+): Promise<void> {
+  if (files.length === 0) return;
+
+  const sandbox = await Sandbox.connect(sandboxId);
+  await sandbox.setTimeout(SANDBOX_TIMEOUT);
+
+  for (const file of files) {
+    await sandbox.files.write(
+      toSandboxAbsolutePath(file.path),
+      file.content
+    );
+  }
+}
+
+/** Nudge the running dev server after bulk writes (best-effort). */
+export async function refreshSandboxDevServer(sandboxId: string): Promise<void> {
+  const sandbox = await Sandbox.connect(sandboxId);
+  await sandbox.setTimeout(SANDBOX_TIMEOUT);
+  try {
+    await sandbox.commands.run(
+      [
+        `touch ${SANDBOX_PROJECT_ROOT}/app/page.tsx 2>/dev/null || true`,
+        `touch ${SANDBOX_PROJECT_ROOT}/src/app/page.tsx 2>/dev/null || true`,
+        'curl -s -o /dev/null http://localhost:3000/ || true',
+      ].join('; ')
+    );
+  } catch {
+    // Preview may still hot-reload; do not fail the run.
+  }
 }
 
 /**
@@ -78,14 +135,15 @@ export async function syncSandboxFilesFromMap(
   sandboxId: string,
   files: Record<string, string>
 ): Promise<void> {
-  if (Object.keys(files).length === 0) return;
-
-  const sandbox = await Sandbox.connect(sandboxId);
-  await sandbox.setTimeout(SANDBOX_TIMEOUT);
-
-  for (const [path, content] of Object.entries(files)) {
-    await sandbox.files.write(path, content);
+  const safe = stripProtectedPathsFromFileMap(files);
+  const entries = Object.entries(safe).map(([path, content]) => ({
+    path,
+    content,
+  }));
+  if (entries.length > 0) {
+    await writeSandboxProjectFiles(sandboxId, entries);
   }
+  await ensureSandboxBootstrapFiles(sandboxId);
 }
 
 function toNodeId(path: string): string {
@@ -245,9 +303,6 @@ export async function syncGraphifyArtifactsToSandbox(
   files: Record<string, string>,
   userPrompt: string
 ): Promise<{ context: string; selectedFiles: Record<string, string> }> {
-  const sandbox = await Sandbox.connect(sandboxId);
-  await sandbox.setTimeout(SANDBOX_TIMEOUT);
-
   const { graphJson, report, context, topFiles } = buildGraphArtifacts(files);
   const selectedPaths = selectGraphRelevantFiles(files, topFiles, userPrompt, 8);
   const selectedFiles = selectedPaths.reduce<Record<string, string>>((acc, path) => {
@@ -256,28 +311,49 @@ export async function syncGraphifyArtifactsToSandbox(
     return acc;
   }, {});
 
-  await sandbox.files.write(GRAPH_JSON_PATH, graphJson);
-  await sandbox.files.write(GRAPH_REPORT_PATH, report);
-  await sandbox.files.write(GRAPH_CONTEXT_PATH, context);
-  await sandbox.files.write(
-    GRAPH_SELECTED_PATH,
-    JSON.stringify({ selectedPaths }, null, 2)
-  );
+  await writeSandboxProjectFiles(sandboxId, [
+    { path: GRAPH_JSON_PATH, content: graphJson },
+    { path: GRAPH_REPORT_PATH, content: report },
+    { path: GRAPH_CONTEXT_PATH, content: context },
+    {
+      path: GRAPH_SELECTED_PATH,
+      content: JSON.stringify({ selectedPaths }, null, 2),
+    },
+  ]);
 
   return { context, selectedFiles };
 }
 
 export async function snapshotSandboxProjectFiles(
-  sandboxId: string
+  sandboxIdOrConnected: string | Sandbox
 ): Promise<Record<string, string>> {
-  const sandbox = await Sandbox.connect(sandboxId);
+  const sandbox =
+    typeof sandboxIdOrConnected === 'string'
+      ? await Sandbox.connect(sandboxIdOrConnected)
+      : sandboxIdOrConnected;
   await sandbox.setTimeout(SANDBOX_TIMEOUT);
 
   const script = String.raw`
 import json
 from pathlib import Path
 
-root = Path('/home/user')
+def pick_project_root():
+    candidates = [
+        Path('/home/user'),
+        Path('/workspace'),
+        Path('/project'),
+        Path('/repo'),
+    ]
+    for base in candidates:
+        if not base.exists():
+            continue
+        if (base / 'package.json').is_file():
+            return base
+        if (base / 'app').is_dir() or (base / 'src').is_dir():
+            return base
+    return Path('/home/user')
+
+root = pick_project_root()
 allow_dirs = ['app', 'src', 'public', 'prisma']
 allow_files = {
   'package.json',

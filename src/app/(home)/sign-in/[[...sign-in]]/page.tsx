@@ -127,7 +127,7 @@ const Page = () => {
                     <Input
                       autoComplete="email"
                       type="email"
-                      placeholder="you@example.com"
+                      placeholder="email"
                       {...field}
                     />
                   </FormControl>
@@ -150,6 +150,7 @@ const Page = () => {
                     <Input
                       autoComplete="current-password"
                       type="password"
+                      placeholder="password"
                       {...field}
                     />
                   </FormControl>

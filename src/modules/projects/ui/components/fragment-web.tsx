@@ -10,10 +10,16 @@ interface Props {
 
 type FrameState = 'loading' | 'ready' | 'error';
 
+function previewSrc(sandboxUrl: string, fragmentId: string): string {
+  const separator = sandboxUrl.includes('?') ? '&' : '?';
+  return `${sandboxUrl}${separator}v=${encodeURIComponent(fragmentId)}`;
+}
+
 export function FragmentWeb({ data }: Props) {
   const [fragmentKey, setFragmentKey] = useState(0);
   const [copied, setCopied] = useState(false);
   const [frameState, setFrameState] = useState<FrameState>('loading');
+  const iframeSrc = data.sandboxUrl ? previewSrc(data.sandboxUrl, data.id) : '';
 
   useEffect(() => {
     // AI generations usually keep the same sandbox URL, so force iframe remount
@@ -82,7 +88,7 @@ export function FragmentWeb({ data }: Props) {
           className="h-full w-full"
           sandbox="allow-forms allow-scripts allow-same-origin"
           loading="lazy"
-          src={data.sandboxUrl}
+          src={iframeSrc}
           onLoad={() => setFrameState('ready')}
           onError={() => setFrameState('error')}
         />

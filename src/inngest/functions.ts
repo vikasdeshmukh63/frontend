@@ -27,11 +27,16 @@ import {
 } from '@/inngest/ai-error-utils';
 import {
   loadInitialAgentFilesFromLatestFragment,
+  normalizeSandboxRelativePath,
+  refreshSandboxDevServer,
   resolveOrCreateSandboxId,
   syncGraphifyArtifactsToSandbox,
   syncSandboxFilesFromMap,
   snapshotSandboxProjectFiles,
+  writeSandboxProjectFiles,
 } from '@/inngest/project-sandbox';
+import { validateProjectFileWrite } from '@/inngest/project-file-validation';
+import { mergeBootstrapIntoFileMap } from '@/inngest/sandbox-bootstrap';
 import {
   consumeCreditsAmount,
   InsufficientCreditsError,
@@ -42,6 +47,16 @@ import { estimateGenerationCredits } from '@/lib/credit-pricing';
 interface AgentState {
   summary: string;
   files: { [path: string]: string };
+}
+
+function codeAgentMaxIterations(): number {
+  const raw = process.env.CODE_AGENT_MAX_ITER;
+  const n = raw !== undefined && raw !== '' ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(n)) {
+    return Math.min(25, Math.max(5, n));
+  }
+  /** Default 12 caps worst-case latency vs. the old 15; override with CODE_AGENT_MAX_ITER. */
+  return 12;
 }
 
 const AI_INVALID_REQUEST_USER_MESSAGE =
@@ -62,7 +77,46 @@ function normalizePromptInput(value: unknown): string {
 
 function isAgentKitToolArgumentsParseError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
-  return error.message.includes('Failed to parse JSON with backticks');
+  const m = error.message.toLowerCase();
+  return (
+    m.includes('failed to parse json with backticks') ||
+    (m.includes('failed to parse json') && m.includes('tool')) ||
+    m.includes('unable to parse tool') ||
+    m.includes('invalid tool arguments') ||
+    (m.includes('tool argument') && m.includes('parse')) ||
+    /** Truncated or malformed tool JSON from the model (often after output length limits). */
+    m.includes('unexpected end of json input') ||
+    m.includes('unterminated string') ||
+    (m.includes('unexpected token') && m.includes('json'))
+  );
+}
+
+/** Shared by writeProjectFile / createOrUpdateFiles — single code path for sandbox + agent state. */
+async function writePathsToSandbox(
+  sandboxId: string,
+  files: { path: string; content: string }[],
+  baseState: Record<string, string>
+): Promise<Record<string, string> | string> {
+  try {
+    const updatedFiles = { ...baseState };
+    const normalized = files.map((file) => ({
+      path: normalizeSandboxRelativePath(file.path),
+      content: file.content,
+    }));
+
+    for (const file of normalized) {
+      const check = validateProjectFileWrite(file.path, file.content);
+      if (!check.ok) return check.error;
+    }
+
+    await writeSandboxProjectFiles(sandboxId, normalized);
+    for (const file of normalized) {
+      updatedFiles[file.path] = file.content;
+    }
+    return updatedFiles;
+  } catch (e) {
+    return `Error: ${e}`;
+  }
 }
 
 function isProviderInvalidMessageError(error: unknown): boolean {
@@ -268,46 +322,68 @@ export const codeAgentFunction = inngest.createFunction(
             }
           },
         }),
+        createTool({
+          name: 'writeProjectFile',
+          description:
+            'Write or overwrite one project file (preferred). Use one call per file — smaller payloads parse reliably.',
+          parameters: z.object({
+            path: z
+              .string()
+              .describe('Relative path only, e.g. app/page.tsx'),
+            content: z
+              .string()
+              .describe(
+                'TypeScript/TSX/CSS source only (max ~48KB). Never base64 or binary image data — use /mock/... paths in code instead. Valid JSON string; escape quotes and newlines.'
+              ),
+          }),
+          handler: async (
+            { path, content },
+            { network }: Tool.Options<AgentState>
+          ) => {
+            const newFiles = await writePathsToSandbox(
+              sandboxId,
+              [{ path, content }],
+              network.state.data.files || {}
+            );
+            if (typeof newFiles === 'string') return newFiles;
+            network.state.data.files = newFiles;
+            return `Wrote ${normalizeSandboxRelativePath(path)}`;
+          },
+        }),
         //createOrUpdateFiles tool
         createTool({
           name: 'createOrUpdateFiles',
-          description: 'create or update files in the sandbox',
+          description:
+            'Batch create or update at most 2 small files only. Prefer writeProjectFile for anything larger than a few KB or more than two paths — large batch JSON often fails to parse.',
           parameters: z.object({
-            files: z.array(
-              z.object({
-                path: z
-                  .string()
-                  .describe('Relative path only, e.g. app/page.tsx'),
-                content: z
-                  .string()
-                  .describe(
-                    'Raw file text as a normal JSON string (escape quotes and newlines per JSON). Never wrap this value in markdown fences or use backticks as JSON delimiters.'
-                  ),
-              })
-            ),
+            files: z
+              .array(
+                z.object({
+                  path: z
+                    .string()
+                    .describe('Relative path only, e.g. app/page.tsx'),
+                  content: z
+                    .string()
+                    .describe(
+                      'TypeScript/TSX source only (max ~48KB each). No base64/images. JSON-escape quotes and newlines; no markdown fences.'
+                    ),
+                })
+              )
+              .min(1)
+              .max(2),
           }),
           handler: async (
             { files },
             { network }: Tool.Options<AgentState>
           ) => {
-            let newFiles: Record<string, string> | string | undefined;
-            try {
-              const updatedFiles = { ...(network.state.data.files || {}) };
-              const sandbox = await getSandbox(sandboxId);
-
-              for (const file of files) {
-                await sandbox.files.write(file.path, file.content);
-                updatedFiles[file.path] = file.content;
-              }
-
-              newFiles = updatedFiles;
-            } catch (e) {
-              newFiles = 'Error: ' + e;
-            }
-
-            if (newFiles && typeof newFiles === 'object') {
-              network.state.data.files = newFiles;
-            }
+            const newFiles = await writePathsToSandbox(
+              sandboxId,
+              files,
+              network.state.data.files || {}
+            );
+            if (typeof newFiles === 'string') return newFiles;
+            network.state.data.files = newFiles;
+            return `Wrote ${files.map((f) => normalizeSandboxRelativePath(f.path)).join(', ')}`;
           },
         }),
         createTool({
@@ -369,7 +445,7 @@ export const codeAgentFunction = inngest.createFunction(
     const network = createNetwork<AgentState>({
       name: 'code-agent-network',
       agents: [codeAgent],
-      maxIter: 15,
+      maxIter: codeAgentMaxIterations(),
       defaultState:state,
       router: async ({ network }) => {
         const summary = network.state.data.summary;
@@ -489,6 +565,8 @@ ${graphContext}
           model: responseModel,
         });
 
+        // Run sequentially: parallel `step.ai.infer` calls reorder generator opcodes
+        // and break Inngest replay/finalization ("error validating generator opcode").
         const { output: fragmentTitleOutput } =
           await fragmentTitleGenerator.run(safeSummary);
         const { output: responseMessageOutput } =
@@ -582,7 +660,7 @@ ${graphContext}
             data: {
               projectId: event.data.projectId,
               content:
-                'The assistant returned invalid data while updating files (this often happens with very large single edits). Your credits have been returned. Please try again — use a smaller prompt or ask for fewer files at once.',
+                'The assistant returned invalid data while updating files (often a file that was too large, or image/base64 data embedded in code). Your credits have been returned. Please try again with a smaller scope, or ask for fewer components at once — images should use /mock/ paths, not base64 in source files.',
               role: 'ASSISTANT',
               type: 'ERROR',
             },
@@ -601,36 +679,30 @@ ${graphContext}
 
     const { result, fragmentTitle, userResponse } = runSuccess;
 
-    const isError =
-      !result.state.data.summary ||
-      Object.keys(result.state.data.files || {}).length === 0;
+    const stateFilesFromRun = result.state.data.files || {};
 
-    const sandboxUrl = await step.run('get-sandbox-url', async () => {
-      const sandbox = await getSandbox(sandboxId);
-      const host = sandbox.getHost(3000);
-      return `https://${host}`;
-    });
+    const { sandboxUrl, sandboxFiles } = await step.run(
+      'finalize-sandbox',
+      async () => {
+        const sandbox = await getSandbox(sandboxId);
+        const host = sandbox.getHost(3000);
+        const url = `https://${host}`;
+        // Ensure disk matches agent state (writes use absolute paths; snapshot reads project root).
+        await syncSandboxFilesFromMap(sandboxId, stateFilesFromRun);
+        await refreshSandboxDevServer(sandboxId);
+        const files = await snapshotSandboxProjectFiles(sandbox);
+        return { sandboxUrl: url, sandboxFiles: files };
+      }
+    );
 
     await step.run('save-result', async () => {
-      if (isError) {
-        return prisma.message.create({
-          data: {
-            projectId: event.data.projectId,
-            content: 'Something went wrong. Please try again later',
-            role: 'ASSISTANT',
-            type: 'ERROR',
-          },
-        });
-      }
-
-      const sandboxFiles = await snapshotSandboxProjectFiles(sandboxId);
-      const mergedFiles = {
+      const mergedFiles = mergeBootstrapIntoFileMap({
         ...allFiles,
-        ...(result.state.data.files || {}),
         ...sandboxFiles,
-      };
+        ...stateFilesFromRun,
+      });
 
-      return prisma.message.create({
+      const created = await prisma.message.create({
         data: {
           projectId: event.data.projectId,
           content: userResponse,
@@ -645,6 +717,7 @@ ${graphContext}
           },
         },
       });
+      return { messageId: created.id };
     });
 
     return {

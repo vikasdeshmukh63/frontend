@@ -123,7 +123,7 @@ const Page = () => {
                 <FormItem>
                   <FormLabel>Name</FormLabel>
                   <FormControl>
-                    <Input autoComplete="name" placeholder="Ada" {...field} />
+                    <Input autoComplete="name" placeholder="Full Name" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -139,7 +139,7 @@ const Page = () => {
                     <Input
                       autoComplete="email"
                       type="email"
-                      placeholder="you@example.com"
+                      placeholder="email"
                       {...field}
                     />
                   </FormControl>
@@ -157,6 +157,7 @@ const Page = () => {
                     <Input
                       autoComplete="new-password"
                       type="password"
+                      placeholder="password"
                       {...field}
                     />
                   </FormControl>

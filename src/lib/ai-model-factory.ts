@@ -69,7 +69,11 @@ export function createAgentKitModel(config: UserAiRuntimeConfig): any {
       return openai({
         model: config.apiModel,
         apiKey: trimmed(config.openaiApiKey),
-        defaultParameters: { temperature: 0.1 },
+        defaultParameters: {
+          temperature: 0.1,
+          /** Large tool payloads truncate without this → invalid tool JSON / parse errors. */
+          max_completion_tokens: 16384,
+        },
       });
     case 'ANTHROPIC':
       return anthropic({
@@ -85,7 +89,10 @@ export function createAgentKitModel(config: UserAiRuntimeConfig): any {
         model: config.apiModel,
         apiKey: trimmed(config.geminiApiKey),
         defaultParameters: {
-          generationConfig: { temperature: 0.1 },
+          generationConfig: {
+            temperature: 0.1,
+            maxOutputTokens: 8192,
+          },
         },
       });
   }

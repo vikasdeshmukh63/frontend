@@ -50,7 +50,6 @@ export const authAuthorizedCallback: NonNullable<
     path === '/' ||
     path.startsWith('/sign-in') ||
     path.startsWith('/sign-up') ||
-    path.startsWith('/pricing') ||
     path.startsWith('/forgot-password') ||
     path.startsWith('/reset-password')
   ) {
