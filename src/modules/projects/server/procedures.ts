@@ -41,10 +41,10 @@ export const projectsRouter = createTRPCRouter({
         const nextSandboxId = await resolveOrCreateSandboxId(existingProject.id);
         const sandboxWasRecreated = !previousSandboxId || previousSandboxId !== nextSandboxId;
 
-        if (sandboxWasRecreated) {
-          const latestFiles = await loadInitialAgentFilesFromLatestFragment(
-            existingProject.id
-          );
+        const latestFiles = await loadInitialAgentFilesFromLatestFragment(
+          existingProject.id
+        );
+        if (Object.keys(latestFiles).length > 0) {
           await syncSandboxFilesFromMap(nextSandboxId, latestFiles);
         }
 
@@ -87,15 +87,7 @@ export const projectsRouter = createTRPCRouter({
 
     return projects;
   }),
-  create: protectedProcedure
-    .input(
-      z.object({
-        value: z
-          .string()
-          .min(1, { message: 'Value is required' })
-          .max(10000, { message: 'Value is too long' }),
-      })
-    )
+  create: protectedProcedure.input(z.object({}).optional())
     .mutation(async ({ input, ctx }) => {
       try {
         const createdProject = await prisma.project.create({
@@ -104,23 +96,6 @@ export const projectsRouter = createTRPCRouter({
             name: generateSlug(2, {
               format: 'kebab',
             }),
-            messages: {
-              create: {
-                content: input.value,
-                role: 'USER',
-                type: 'RESULT',
-              },
-            },
-          },
-        });
-
-        await inngest.send({
-          name: 'code-agent/run',
-          data: {
-            value: input.value,
-            projectId: createdProject.id,
-            userId: ctx.auth.userId,
-            newSession: true,
           },
         });
 

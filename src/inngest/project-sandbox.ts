@@ -2,6 +2,7 @@ import { Sandbox } from '@e2b/code-interpreter';
 
 import { prisma } from '@/lib/db';
 import { SANDBOX_TIMEOUT } from '@/inngest/types';
+import { runSandboxCommand } from '@/inngest/timeouts';
 import {
   ensureSandboxBootstrapFiles,
   stripProtectedPathsFromFileMap,
@@ -43,6 +44,21 @@ export function toSandboxAbsolutePath(path: string): string {
   return rel ? `${SANDBOX_PROJECT_ROOT}/${rel}` : SANDBOX_PROJECT_ROOT;
 }
 
+/** Write binary assets (e.g. user reference photos) into the sandbox. */
+export async function writeSandboxBinaryFile(
+  sandboxId: string,
+  relativePath: string,
+  data: Buffer | Uint8Array
+): Promise<void> {
+  const sandbox = await Sandbox.connect(sandboxId);
+  await sandbox.setTimeout(SANDBOX_TIMEOUT);
+  const bytes = Uint8Array.from(data);
+  await sandbox.files.write(
+    toSandboxAbsolutePath(relativePath),
+    bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)
+  );
+}
+
 export async function writeSandboxProjectFiles(
   sandboxId: string,
   files: Array<{ path: string; content: string }>
@@ -60,21 +76,100 @@ export async function writeSandboxProjectFiles(
   }
 }
 
+/** Start Next dev server if port 3000 is not responding (template process may have died). */
+export async function ensureSandboxDevServerRunning(
+  sandboxId: string
+): Promise<void> {
+  const sandbox = await Sandbox.connect(sandboxId);
+  await sandbox.setTimeout(SANDBOX_TIMEOUT);
+
+  const probe = await runSandboxCommand(
+    sandbox,
+    'curl -s -o /dev/null -w "%{http_code}" --max-time 8 http://127.0.0.1:3000/ 2>/dev/null || echo 000',
+    { timeoutMs: 15_000 }
+  );
+  const code = probe.stdout.trim().slice(-3);
+  if (code === '200' || code === '304') return;
+
+  await runSandboxCommand(
+    sandbox,
+    [
+      `cd ${SANDBOX_PROJECT_ROOT}`,
+      'nohup npm run dev -- -p 3000 -H 0.0.0.0 > /tmp/next-dev.log 2>&1 &',
+      'sleep 4',
+    ].join(' && '),
+    { timeoutMs: 45_000 }
+  );
+}
+
 /** Nudge the running dev server after bulk writes (best-effort). */
 export async function refreshSandboxDevServer(sandboxId: string): Promise<void> {
+  await ensureSandboxDevServerRunning(sandboxId);
   const sandbox = await Sandbox.connect(sandboxId);
   await sandbox.setTimeout(SANDBOX_TIMEOUT);
   try {
-    await sandbox.commands.run(
+    await runSandboxCommand(
+      sandbox,
       [
         `touch ${SANDBOX_PROJECT_ROOT}/app/page.tsx 2>/dev/null || true`,
         `touch ${SANDBOX_PROJECT_ROOT}/src/app/page.tsx 2>/dev/null || true`,
-        'curl -s -o /dev/null http://localhost:3000/ || true',
-      ].join('; ')
+        'curl -s --max-time 20 -o /dev/null http://127.0.0.1:3000/ || true',
+        'sleep 2',
+        'curl -s --max-time 20 -o /dev/null http://127.0.0.1:3000/ || true',
+      ].join('; '),
+      { timeoutMs: 60_000 }
     );
   } catch {
     // Preview may still hot-reload; do not fail the run.
   }
+}
+
+/**
+ * Poll until Next returns HTML with a real app shell (avoids blank iframe while compiling).
+ */
+export async function waitForSandboxPreviewReady(
+  sandboxId: string,
+  maxWaitMs = 120_000
+): Promise<{ ready: boolean; httpCode: string }> {
+  const sandbox = await Sandbox.connect(sandboxId);
+  await sandbox.setTimeout(SANDBOX_TIMEOUT);
+  const started = Date.now();
+  let lastCode = '000';
+
+  while (Date.now() - started < maxWaitMs) {
+    const result = await runSandboxCommand(
+      sandbox,
+      `curl -sS --max-time 12 -w "\\n__HTTP__%{http_code}" http://127.0.0.1:3000/ 2>/dev/null | tail -c 8000`,
+      { timeoutMs: 20_000 }
+    );
+    const raw = result.stdout;
+    const codeMatch = raw.match(/__HTTP__(\d{3})$/);
+    lastCode = codeMatch?.[1] ?? '000';
+    const body = raw.replace(/__HTTP__\d{3}$/, '');
+
+    const hasAppShell =
+      /<html[\s>]/i.test(body) &&
+      (body.includes('__next') ||
+        body.includes('<main') ||
+        body.includes('id="root"') ||
+        body.length > 400);
+    const isBuildError =
+      /Build Error|Application error|Module not found|Failed to compile/i.test(
+        body
+      );
+
+    if (
+      (lastCode === '200' || lastCode === '304') &&
+      hasAppShell &&
+      !isBuildError
+    ) {
+      return { ready: true, httpCode: lastCode };
+    }
+
+    await new Promise((r) => setTimeout(r, 3_000));
+  }
+
+  return { ready: false, httpCode: lastCode };
 }
 
 /**
@@ -354,7 +449,7 @@ def pick_project_root():
     return Path('/home/user')
 
 root = pick_project_root()
-allow_dirs = ['app', 'src', 'public', 'prisma']
+allow_dirs = ['app', 'src', 'public', 'prisma', 'components', 'lib', 'hooks']
 allow_files = {
   'package.json',
   'next.config.ts',
@@ -417,7 +512,7 @@ fi
 
   let raw = '';
   try {
-    const result = await sandbox.commands.run(command);
+    const result = await runSandboxCommand(sandbox, command);
     raw = (result.stdout ?? '').trim();
   } catch {
     return {};

@@ -35,30 +35,42 @@ export const ProjectForm = () => {
     },
   });
 
-  const createProject = useMutation(
-    trpc.projects.create.mutationOptions({
-      onSuccess: (data) => {
-        queryClient.invalidateQueries(trpc.projects.getMany.queryOptions());
-        queryClient.invalidateQueries(trpc.usage.status.queryOptions());
-        router.push(`/projects/${data.id}`);
-      },
-      onError: (error) => {
-        toast.error(error.message || 'Something went wrong');
-
-        if (error.data?.code === 'UNAUTHORIZED') {
-          router.push('/sign-in');
-        }
-        if (error.data?.code === 'TOO_MANY_REQUESTS') {
-          router.push('/pricing');
-        }
-      },
-    })
-  );
+  const createProject = useMutation(trpc.projects.create.mutationOptions());
+  const createMessage = useMutation(trpc.messages.create.mutationOptions());
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
-    await createProject.mutateAsync({
-      value: values.value,
-    });
+    try {
+      const project = await createProject.mutateAsync({});
+      await createMessage.mutateAsync({
+        projectId: project.id,
+        value: values.value,
+        newSession: true,
+      });
+      queryClient.invalidateQueries(trpc.projects.getMany.queryOptions());
+      queryClient.invalidateQueries(trpc.usage.status.queryOptions());
+      form.reset();
+      router.push(`/projects/${project.id}`);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Something went wrong'
+      );
+      if (
+        error &&
+        typeof error === 'object' &&
+        'data' in error &&
+        (error as { data?: { code?: string } }).data?.code === 'UNAUTHORIZED'
+      ) {
+        router.push('/sign-in');
+      }
+      if (
+        error &&
+        typeof error === 'object' &&
+        'data' in error &&
+        (error as { data?: { code?: string } }).data?.code === 'TOO_MANY_REQUESTS'
+      ) {
+        router.push('/pricing');
+      }
+    }
   };
 
   const onSelect = (value: string) => {
@@ -70,7 +82,7 @@ export const ProjectForm = () => {
   };
 
   const [isFocused, setIsFocused] = useState(false);
-  const isPending = createProject.isPending;
+  const isPending = createProject.isPending || createMessage.isPending;
   const isButtonDisabled = isPending || !form.formState.isValid;
 
   return (
@@ -86,36 +98,31 @@ export const ProjectForm = () => {
           <FormField
             control={form.control}
             name="value"
-            render={({ field }) => {
-              return (
-                <TextareaAutosize
-                  {...field}
-                  disabled={isPending}
-                  onFocus={() => setIsFocused(true)}
-                  onBlur={() => setIsFocused(false)}
-                  minRows={2}
-                  maxRows={8}
-                  className="w-full resize-none border-none bg-transparent pt-4 outline-none"
-                  placeholder="What would you like to build"
-                  onKeyDown={(e) => {
-                    if (e.key == 'Enter' && (e.ctrlKey || e.metaKey)) {
-                      e.preventDefault();
-                      form.handleSubmit(onSubmit)(e);
-                    }
-                  }}
-                />
-              );
-            }}
+            render={({ field }) => (
+              <TextareaAutosize
+                {...field}
+                disabled={isPending}
+                onFocus={() => setIsFocused(true)}
+                onBlur={() => setIsFocused(false)}
+                minRows={2}
+                maxRows={8}
+                className="w-full resize-none border-none bg-transparent pt-4 outline-none"
+                placeholder="What would you like to build"
+                onKeyDown={(e) => {
+                  if (e.key == 'Enter' && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    form.handleSubmit(onSubmit)(e);
+                  }
+                }}
+              />
+            )}
           />
           <div className="flex flex-wrap items-end justify-between gap-x-2 gap-y-2 pt-2">
             <div className="flex min-w-0 flex-1 flex-wrap items-end gap-x-3 gap-y-1">
               <ChatAiSettingsButton />
-              <div className="text-muted-foreground font-mono text-[10px]">
-                <kbd className="bg-muted text-muted-foreground pointer-events-none inline-flex h-5 items-center gap-1 rounded border px-1.5 font-mono text-[10px] font-medium select-none">
-                  <span>&#8984;</span>Enter
-                </kbd>
-                &nbsp;to submit
-              </div>
+              <p className="text-muted-foreground text-[10px]">
+                Attach reference images inside the project chat
+              </p>
             </div>
             <Button
               disabled={isButtonDisabled}

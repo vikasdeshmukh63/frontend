@@ -11,15 +11,26 @@ import {
   CopyIcon,
   Loader2Icon,
   PencilIcon,
+  RefreshCwIcon,
   RotateCcwIcon,
   XIcon,
 } from 'lucide-react';
 import Image from 'next/image';
+import { ChatAttachmentImage } from './chat-attachment-image';
 import TextareaAutosize from 'react-textarea-autosize';
 import { useEffect, useState } from 'react';
 
+type MessageAttachmentView = {
+  id: string;
+  publicUrl: string;
+  fileName: string;
+  mimeType: string;
+};
+
 interface UserMessageProps {
+  projectId: string;
   content: string;
+  attachments?: MessageAttachmentView[];
   onCopy: () => void;
   onEdit: () => void;
   isEditing: boolean;
@@ -33,7 +44,9 @@ interface UserMessageProps {
 }
 
 const UserMessage = ({
+  projectId,
   content,
+  attachments = [],
   onCopy,
   onEdit,
   isEditing,
@@ -65,7 +78,29 @@ const UserMessage = ({
               className="w-full resize-none border-none bg-transparent outline-none"
             />
           ) : (
-            <span className="wrap-break-word">{content}</span>
+            <>
+              <span className="wrap-break-word">{content}</span>
+              {attachments.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {attachments.map((att) => (
+                    <a
+                      key={att.id}
+                      href={att.publicUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="bg-background relative block size-20 overflow-hidden rounded-md border"
+                    >
+                      <ChatAttachmentImage
+                        projectId={projectId}
+                        attachmentId={att.id}
+                        fileName={att.fileName}
+                        imageUrl={att.publicUrl}
+                      />
+                    </a>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </Card>
         <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
@@ -153,6 +188,9 @@ interface AssistantMessageProps {
   onCopy: () => void;
   onRevert: () => void;
   isReverting: boolean;
+  canRegenerate: boolean;
+  onRegenerate: () => void;
+  isRegenerating: boolean;
 }
 
 const AssistantMessage = ({
@@ -163,6 +201,9 @@ const AssistantMessage = ({
   onCopy,
   onRevert,
   isReverting,
+  canRegenerate,
+  onRegenerate,
+  isRegenerating,
 }: AssistantMessageProps) => {
   const [copied, setCopied] = useState(false);
   useEffect(() => {
@@ -193,7 +234,24 @@ const AssistantMessage = ({
       </div>
       <div className="flex flex-col gap-y-4 pl-8.5">
         <span>{content}</span>
-        <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="flex flex-wrap items-center gap-1 opacity-100 sm:opacity-0 sm:transition-opacity sm:group-hover:opacity-100">
+          {canRegenerate && (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 gap-1 px-2 text-xs"
+              onClick={onRegenerate}
+              disabled={isRegenerating}
+            >
+              {isRegenerating ? (
+                <Loader2Icon className="size-3.5 animate-spin" />
+              ) : (
+                <RefreshCwIcon className="size-3.5" />
+              )}
+              Regenerate
+            </Button>
+          )}
           <Button
             type="button"
             size="icon"
@@ -234,8 +292,10 @@ const AssistantMessage = ({
 };
 
 interface MessageCardProps {
+  projectId: string;
   content: string;
   role: MessageRole;
+  attachments?: MessageAttachmentView[];
   fragment: Fragment | null;
   editedFromContent?: string | null;
   createdAt: Date;
@@ -251,11 +311,16 @@ interface MessageCardProps {
   onSaveEdit: () => void;
   onRevertEditToPrevious: () => void;
   onRevert: () => void;
+  canRegenerate: boolean;
+  onRegenerate: () => void;
+  isRegenerating: boolean;
 }
 
 const MessageCard = ({
+  projectId,
   content,
   role,
+  attachments,
   fragment,
   editedFromContent,
   createdAt,
@@ -271,6 +336,9 @@ const MessageCard = ({
   onSaveEdit,
   onRevertEditToPrevious,
   onRevert,
+  canRegenerate,
+  onRegenerate,
+  isRegenerating,
 }: MessageCardProps) => {
   if (role === 'ASSISTANT') {
     return (
@@ -282,13 +350,18 @@ const MessageCard = ({
         onCopy={onCopy}
         onRevert={onRevert}
         isReverting={isReverting}
+        canRegenerate={canRegenerate}
+        onRegenerate={onRegenerate}
+        isRegenerating={isRegenerating}
       />
     );
   }
 
   return (
     <UserMessage
+      projectId={projectId}
       content={content}
+      attachments={attachments}
       onCopy={onCopy}
       onEdit={onEdit}
       isEditing={isEditing}

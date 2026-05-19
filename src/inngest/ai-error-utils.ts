@@ -45,6 +45,7 @@ export function isProviderRateLimitError(error: unknown): boolean {
   if (blob.includes("rpm") && blob.includes("limit")) return true;
   if (blob.includes("too many requests")) return true;
   if (blob.includes("429")) return true;
+  if (blob.includes("unsuccessful status code: 429")) return true;
 
   if (typeof error === "object" && error !== null) {
     const t = (error as { type?: string }).type;

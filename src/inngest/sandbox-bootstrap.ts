@@ -29,9 +29,9 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark">
       <body
-        className={\`\${geistSans.variable} \${geistMono.variable} min-h-screen antialiased\`}
+        className={\`\${geistSans.variable} \${geistMono.variable} min-h-screen bg-background text-foreground antialiased\`}
       >
         {children}
       </body>
@@ -114,11 +114,27 @@ export function getSandboxBootstrapFiles(): Record<string, string> {
  * Restores a valid root layout + globals on disk so Next.js dev server can run.
  */
 export async function ensureSandboxBootstrapFiles(sandboxId: string): Promise<void> {
+  const { getSandbox } = await import('@/inngest/utils');
+  const { toSandboxAbsolutePath } = await import('@/inngest/project-sandbox');
   const bootstrap = getSandboxBootstrapFiles();
-  await writeSandboxProjectFiles(
-    sandboxId,
-    Object.entries(bootstrap).map(([path, content]) => ({ path, content }))
-  );
+  const files = Object.entries(bootstrap).map(([path, content]) => ({
+    path,
+    content,
+  }));
+
+  try {
+    const sandbox = await getSandbox(sandboxId);
+    const srcPage = await sandbox.files.read(
+      toSandboxAbsolutePath('src/app/page.tsx')
+    );
+    if (typeof srcPage === 'string' && srcPage.trim().length > 0) {
+      files.push({ path: 'src/app/layout.tsx', content: DEFAULT_APP_LAYOUT });
+    }
+  } catch {
+    /* app router lives under /app only */
+  }
+
+  await writeSandboxProjectFiles(sandboxId, files);
 }
 
 /** Merge bootstrap into a fragment file map for persistence (without agent-broken layouts). */

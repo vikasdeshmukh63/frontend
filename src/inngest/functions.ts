@@ -9,14 +9,13 @@ import {
 import { inngest } from './client';
 import { getSandbox, lastAssistantTextMessageContent } from './utils';
 import { z } from 'zod';
-import { FRAGMENT_TITLE_PROMPT, PROMPT, RESPONSE_PROMPT } from '@/prompt';
+import { PROMPT } from '@/prompt';
 import { prisma } from '@/lib/db';
 import {
   createAgentKitModel,
   getUserAiRuntimeConfig,
 } from '@/lib/ai-model-factory';
 import {
-  boundFilesForRateLimit,
   boundMessagesForRateLimit,
   enforceLocalInputRateLimit,
   estimateInputTokens,
@@ -26,48 +25,99 @@ import {
   isProviderRateLimitError,
 } from '@/inngest/ai-error-utils';
 import {
+  ensureAppPageForPreview,
+  hasCustomSourceFiles,
+} from '@/inngest/auto-wire-page';
+import { agentStateHasBuiltAppPage } from '@/inngest/generation-guard';
+import {
   loadInitialAgentFilesFromLatestFragment,
   normalizeSandboxRelativePath,
   refreshSandboxDevServer,
+  waitForSandboxPreviewReady,
   resolveOrCreateSandboxId,
   syncGraphifyArtifactsToSandbox,
   syncSandboxFilesFromMap,
   snapshotSandboxProjectFiles,
   writeSandboxProjectFiles,
 } from '@/inngest/project-sandbox';
+import { ensureSandboxBootstrapFiles } from '@/inngest/sandbox-bootstrap';
 import { validateProjectFileWrite } from '@/inngest/project-file-validation';
 import { mergeBootstrapIntoFileMap } from '@/inngest/sandbox-bootstrap';
+import {
+  formatReferenceImagesPromptSection,
+  referenceImagePublicUrls,
+  resolveReferenceImagesForSandbox,
+  type ReferenceImageInput,
+} from '@/inngest/reference-images';
+import { buildAttachmentPublicUrl } from '@/lib/object-storage';
 import {
   consumeCreditsAmount,
   InsufficientCreditsError,
   refundFailedGenerationCredits,
 } from '@/lib/credit-service';
 import { estimateGenerationCredits } from '@/lib/credit-pricing';
+import {
+  deriveFragmentTitle,
+  deriveUserResponse,
+} from '@/inngest/generation-metadata';
+import {
+  createGenerationStatusMessage,
+  pushGenerationStep,
+  completeGenerationSteps,
+} from '@/inngest/generation-status';
+import { defaultGenerationProgress } from '@/lib/generation-progress';
+import { finishGenerationSession } from '@/lib/code-agent-queue';
+import { blockedTerminalCommandReason } from '@/inngest/terminal-guard';
+import {
+  AgentRunTimeoutError,
+  codeAgentRunTimeoutMs,
+  codeAgentSoftStopBeforeTimeoutMs,
+  runSandboxCommand,
+  SandboxCommandTimeoutError,
+  withTimeout,
+} from '@/inngest/timeouts';
 
 interface AgentState {
   summary: string;
   files: { [path: string]: string };
+  /** Permanent public HTTPS URLs for sandbox img src */
+  referenceImagePublicUrls: string[];
 }
+
+function truncateForAgentContext(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  return `${text.slice(0, maxChars)}\n\n[truncated]`;
+}
+
+function isInngestStepPayloadTooLargeError(error: unknown): boolean {
+  const msg = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  return (
+    msg.includes('step input size is greater than the limit') ||
+    msg.includes('validating generator opcode')
+  );
+}
+
+const STEP_PAYLOAD_TOO_LARGE_USER_MESSAGE =
+  'This run sent too much data between agent steps (often from embedding an image in code). Use the full HTTPS URLs from <reference_images> in <img src="..."> only. Your credits have been returned. Try again with a shorter prompt or fewer files.';
 
 function codeAgentMaxIterations(): number {
   const raw = process.env.CODE_AGENT_MAX_ITER;
   const n = raw !== undefined && raw !== '' ? Number.parseInt(raw, 10) : NaN;
   if (Number.isFinite(n)) {
-    return Math.min(25, Math.max(5, n));
+    return Math.min(8, Math.max(3, n));
   }
-  /** Default 12 caps worst-case latency vs. the old 15; override with CODE_AGENT_MAX_ITER. */
-  return 12;
+  /** Default 4 keeps runs fast; override with CODE_AGENT_MAX_ITER (3–8). */
+  return 4;
 }
 
 const AI_INVALID_REQUEST_USER_MESSAGE =
   'The AI request payload was empty or invalid for the selected model. Please try again, or send a slightly more specific prompt.';
 
-function shouldPreloadContextFiles(): boolean {
-  const flag = process.env.INNGEST_PRELOAD_CONTEXT_FILES;
-  if (!flag) return false;
-  const normalized = flag.trim().toLowerCase();
-  return normalized === '1' || normalized === 'true' || normalized === 'yes';
-}
+const AGENT_TIMEOUT_USER_MESSAGE =
+  'This generation could not finish in time and no app files were saved. Your credits have been returned. Try a smaller, more specific request.';
+
+const AGENT_TIMEOUT_RECOVERED_NOTE =
+  ' The assistant hit the time limit before every optional step finished; your preview was still saved and you can ask for follow-up tweaks.';
 
 function normalizePromptInput(value: unknown): string {
   const text = typeof value === 'string' ? value.trim() : '';
@@ -91,11 +141,22 @@ function isAgentKitToolArgumentsParseError(error: unknown): boolean {
   );
 }
 
+/** Tiny marker in agent state — full sources live on the sandbox only. */
+function agentStateFileMarker(path: string, content: string): string {
+  if (path.endsWith('page.tsx')) {
+    return content.slice(0, 1_200);
+  }
+  return '1';
+}
+
+const MAX_AGENT_STATE_FILE_PATHS = 48;
+
 /** Shared by writeProjectFile / createOrUpdateFiles — single code path for sandbox + agent state. */
 async function writePathsToSandbox(
   sandboxId: string,
   files: { path: string; content: string }[],
-  baseState: Record<string, string>
+  baseState: Record<string, string>,
+  onFileWritten?: (relativePath: string) => void | Promise<void>
 ): Promise<Record<string, string> | string> {
   try {
     const updatedFiles = { ...baseState };
@@ -111,7 +172,15 @@ async function writePathsToSandbox(
 
     await writeSandboxProjectFiles(sandboxId, normalized);
     for (const file of normalized) {
-      updatedFiles[file.path] = file.content;
+      updatedFiles[file.path] = agentStateFileMarker(file.path, file.content);
+      await onFileWritten?.(file.path);
+    }
+    const paths = Object.keys(updatedFiles);
+    if (paths.length > MAX_AGENT_STATE_FILE_PATHS) {
+      const drop = paths.length - MAX_AGENT_STATE_FILE_PATHS;
+      for (const p of paths.slice(0, drop)) {
+        if (!p.endsWith('page.tsx')) delete updatedFiles[p];
+      }
     }
     return updatedFiles;
   } catch (e) {
@@ -192,13 +261,26 @@ export const codeAgentFunction = inngest.createFunction(
               type: 'ERROR',
             },
           });
+          await finishGenerationSession(projectId);
         }
       });
     },
   },
   async ({ event, step, runId }) => {
-    const preloadContextFiles = shouldPreloadContextFiles();
     const normalizedPrompt = normalizePromptInput(event.data.value);
+    const referenceImages: ReferenceImageInput[] = Array.isArray(
+      event.data.referenceImages
+    )
+      ? event.data.referenceImages
+          .filter(
+            (img): img is ReferenceImageInput =>
+              !!img &&
+              typeof img === 'object' &&
+              typeof (img as ReferenceImageInput).fileName === 'string' &&
+              typeof (img as ReferenceImageInput).storageKey === 'string'
+          )
+          .slice(0, 4)
+      : [];
     const userId =
       typeof event.data.userId === 'string' ? event.data.userId : undefined;
     const forceNewSession = event.data.newSession === true;
@@ -212,24 +294,51 @@ export const codeAgentFunction = inngest.createFunction(
     });
 
     const primaryModel = createAgentKitModel(aiConfig);
-    const fragmentTitleModel = createAgentKitModel(aiConfig);
-    const responseModel = createAgentKitModel(aiConfig);
 
-    const {
-      sandboxId,
-      previousMessages,
-      allFiles,
-      contextFiles,
-      graphContext,
-    } = await step.run(
+    const preCreatedStatusId =
+      typeof event.data.generationStatusMessageId === 'string'
+        ? event.data.generationStatusMessageId
+        : undefined;
+
+    let generationStatusMessageId: string | undefined = preCreatedStatusId;
+    const generationProgressRef: { messageId?: string } = {
+      messageId: preCreatedStatusId,
+    };
+
+    let sandboxId: string;
+    let previousMessages: Message[];
+    let graphContext: string;
+    let referenceImagePrompt: string;
+    let resolvedPublicUrls: string[];
+
+    try {
+      ({
+        sandboxId,
+        previousMessages,
+        graphContext,
+        referenceImagePrompt,
+        referenceImagePublicUrls: resolvedPublicUrls,
+      } = await step.run(
       'prepare-agent-session',
       async () => {
         const projectId = event.data.projectId;
 
+        if (generationStatusMessageId) {
+          await pushGenerationStep(
+            generationStatusMessageId,
+            'Connecting to your dev sandbox',
+            { headline: 'Preparing environment…', markPreviousDone: false }
+          );
+        }
+
         const initialFiles =
           await loadInitialAgentFilesFromLatestFragment(projectId);
 
-        const sandboxId = await resolveOrCreateSandboxId(projectId, forceNewSession);
+        const sandboxId = await withTimeout(
+          resolveOrCreateSandboxId(projectId, forceNewSession),
+          3 * 60 * 1000,
+          'sandbox setup'
+        );
 
         await prisma.project.update({
           where: { id: projectId },
@@ -237,10 +346,19 @@ export const codeAgentFunction = inngest.createFunction(
         });
 
         await syncSandboxFilesFromMap(sandboxId, initialFiles);
-        const { context: graphContext, selectedFiles } = await syncGraphifyArtifactsToSandbox(
+        const { context: graphContext } = await syncGraphifyArtifactsToSandbox(
           sandboxId,
           initialFiles,
           normalizedPrompt
+        );
+
+        const { resolved: resolvedRefs, failed: failedRefNames } =
+          resolveReferenceImagesForSandbox(referenceImages);
+        const referenceImagePublicUrlsList =
+          referenceImagePublicUrls(resolvedRefs);
+        const referenceImagePrompt = formatReferenceImagesPromptSection(
+          resolvedRefs,
+          failedRefNames
         );
 
         const formattedMessages: Message[] = [];
@@ -248,37 +366,99 @@ export const codeAgentFunction = inngest.createFunction(
           where: { projectId },
           orderBy: { createdAt: 'desc' },
           take: 10,
+          include: {
+            attachments: { orderBy: { createdAt: 'asc' } },
+          },
         });
 
         for (const message of messages) {
+          let content = message.content;
+          if (message.role === 'USER' && message.attachments.length > 0) {
+            const lines = message.attachments.map((a) => {
+              const idx = referenceImages.findIndex(
+                (r) => r.storageKey === a.storageKey
+              );
+              const url =
+                idx >= 0
+                  ? referenceImagePublicUrlsList[idx]
+                  : a.storageKey
+                    ? buildAttachmentPublicUrl(a.storageKey)
+                    : undefined;
+              return url
+                ? `- ${a.fileName}: use <img src="${url}" /> (public URL for sandbox)`
+                : `- ${a.fileName}: see <reference_images>`;
+            });
+            content += `\n\n[Attached reference images]\n${lines.join('\n')}`;
+          }
           formattedMessages.push({
             type: 'text',
             role: message.role === 'ASSISTANT' ? 'assistant' : 'user',
-            content: message.content,
+            content,
           });
+        }
+
+        if (generationStatusMessageId) {
+          await pushGenerationStep(
+            generationStatusMessageId,
+            'Project context ready',
+            { headline: 'Preparing environment…' }
+          );
         }
 
         return {
           sandboxId,
-          previousMessages: formattedMessages.reverse(),
-          allFiles: initialFiles,
-          contextFiles: preloadContextFiles
-            ? Object.keys(selectedFiles).length > 0
-              ? selectedFiles
-              : initialFiles
-            : {},
-          graphContext,
+          previousMessages: boundMessagesForRateLimit(
+            formattedMessages.reverse()
+          ),
+          graphContext: truncateForAgentContext(graphContext, 4_000),
+          referenceImagePrompt: truncateForAgentContext(
+            referenceImagePrompt,
+            4_000
+          ),
+          referenceImagePublicUrls: referenceImagePublicUrlsList,
         };
       }
-    );
+    ));
+    } catch (prepareErr) {
+      if (
+        prepareErr instanceof AgentRunTimeoutError ||
+        prepareErr instanceof SandboxCommandTimeoutError
+      ) {
+        await step.run('save-sandbox-setup-timeout', async () => {
+          await finishGenerationSession(
+            event.data.projectId,
+            generationStatusMessageId
+          );
+          return prisma.message.create({
+            data: {
+              projectId: event.data.projectId,
+              content:
+                'Could not start the dev sandbox in time (E2B may be slow or unavailable). Please try again in a minute.',
+              role: 'ASSISTANT',
+              type: 'ERROR',
+            },
+          });
+        });
+        return {
+          url: '',
+          title: '',
+          files: {},
+          summary: '',
+          sandboxSetupTimeout: true as const,
+        };
+      }
+      throw prepareErr;
+    }
 
-    const boundedMessages = boundMessagesForRateLimit(previousMessages);
-    const boundedFiles = boundFilesForRateLimit(contextFiles);
+    const boundedMessages = previousMessages;
+    /** File contents stay on the sandbox — never pass source bodies through Inngest steps. */
+    const boundedFiles: Record<string, string> = {};
 
     const state = createState<AgentState>(
       {
         summary: '',
         files: boundedFiles,
+        referenceImagePublicUrls: resolvedPublicUrls ?? [],
       },
       {
         messages: boundedMessages,
@@ -301,11 +481,14 @@ export const codeAgentFunction = inngest.createFunction(
           // No `step.run` here: random or changing step IDs break Inngest replay/finalization
           // (hash mismatch). Top-level function steps stay durable.
           handler: async ({ command }) => {
+            const blocked = blockedTerminalCommandReason(command);
+            if (blocked) return blocked;
+
             const buffers = { stdout: '', stderr: '' };
 
             try {
               const sandbox = await getSandbox(sandboxId);
-              const result = await sandbox.commands.run(command, {
+              const result = await runSandboxCommand(sandbox, command, {
                 onStdout: (data: string) => {
                   buffers.stdout += data;
                 },
@@ -343,7 +526,15 @@ export const codeAgentFunction = inngest.createFunction(
             const newFiles = await writePathsToSandbox(
               sandboxId,
               [{ path, content }],
-              network.state.data.files || {}
+              network.state.data.files || {},
+              async (rel) => {
+                if (!generationProgressRef.messageId) return;
+                await pushGenerationStep(
+                  generationProgressRef.messageId,
+                  `Edited ${rel}`,
+                  { headline: 'Building…' }
+                );
+              }
             );
             if (typeof newFiles === 'string') return newFiles;
             network.state.data.files = newFiles;
@@ -379,7 +570,15 @@ export const codeAgentFunction = inngest.createFunction(
             const newFiles = await writePathsToSandbox(
               sandboxId,
               files,
-              network.state.data.files || {}
+              network.state.data.files || {},
+              async (rel) => {
+                if (!generationProgressRef.messageId) return;
+                await pushGenerationStep(
+                  generationProgressRef.messageId,
+                  `Edited ${rel}`,
+                  { headline: 'Building…' }
+                );
+              }
             );
             if (typeof newFiles === 'string') return newFiles;
             network.state.data.files = newFiles;
@@ -397,13 +596,35 @@ export const codeAgentFunction = inngest.createFunction(
             try {
               const sandbox = await getSandbox(sandboxId);
               const targetPath = path.trim() || '.';
-              const result = await sandbox.commands.run(
+              const result = await runSandboxCommand(
+                sandbox,
                 `find ${JSON.stringify(targetPath)} -type f | sort`
               );
               return result.stdout;
             } catch (e) {
               return 'Error: ' + e;
             }
+          },
+        }),
+        createTool({
+          name: 'listReferenceImages',
+          description:
+            'List public HTTPS URLs for user-uploaded images (use exact URL in img src for sandbox preview)',
+          parameters: z.object({}),
+          handler: async (
+            _args,
+            { network }: Tool.Options<AgentState>
+          ) => {
+            const urls = network?.state.data.referenceImagePublicUrls ?? [];
+            if (urls.length === 0) {
+              return 'No reference images for this run.';
+            }
+            return JSON.stringify(
+              urls.map((publicUrl) => ({
+                publicUrl,
+                example: `<img src="${publicUrl}" alt="Reference" className="w-full h-auto rounded-lg" />`,
+              }))
+            );
           },
         }),
         createTool({
@@ -415,10 +636,18 @@ export const codeAgentFunction = inngest.createFunction(
           handler: async ({ files }) => {
             try {
               const sandbox = await getSandbox(sandboxId);
-              const contents = [];
-              for (const file of files) {
+              const contents: { path: string; content: string }[] = [];
+              let totalChars = 0;
+              const maxChars = 12_000;
+              for (const file of files.slice(0, 8)) {
                 const content = await sandbox.files.read(file);
-                contents.push({ path: file, content });
+                const slice =
+                  totalChars + content.length > maxChars
+                    ? content.slice(0, Math.max(0, maxChars - totalChars))
+                    : content;
+                totalChars += slice.length;
+                contents.push({ path: file, content: slice });
+                if (totalChars >= maxChars) break;
               }
               return JSON.stringify(contents);
             } catch (e) {
@@ -432,9 +661,16 @@ export const codeAgentFunction = inngest.createFunction(
           const lastAssistantMessageText =
             await lastAssistantTextMessageContent(result);
 
-          if (lastAssistantMessageText && network) {
-            if (lastAssistantMessageText.includes('<task_summary>')) {
-              network.state.data.summary = lastAssistantMessageText;
+          if (network) {
+            const summary = network.state.data.summary ?? '';
+            if (summary.length > 4_000) {
+              network.state.data.summary = truncateForAgentContext(summary, 4_000);
+            }
+            if (lastAssistantMessageText?.includes('<task_summary>')) {
+              network.state.data.summary = truncateForAgentContext(
+                lastAssistantMessageText,
+                4_000
+              );
             }
           }
           return result;
@@ -442,32 +678,83 @@ export const codeAgentFunction = inngest.createFunction(
       },
     });
 
+    const agentNetworkStartedAt = Date.now();
+    const agentSoftStopAt =
+      agentNetworkStartedAt +
+      codeAgentRunTimeoutMs() -
+      codeAgentSoftStopBeforeTimeoutMs();
+
     const network = createNetwork<AgentState>({
       name: 'code-agent-network',
       agents: [codeAgent],
       maxIter: codeAgentMaxIterations(),
-      defaultState:state,
+      defaultState: state,
       router: async ({ network }) => {
-        const summary = network.state.data.summary;
-        if (summary) {
+        const files = network.state.data.files || {};
+        const fileCount = Object.keys(files).length;
+        const hasPage = agentStateHasBuiltAppPage(files);
+        const hasAppComponents = Object.keys(files).some(
+          (p) =>
+            (p.startsWith('app/') || p.startsWith('src/app/')) &&
+            p.endsWith('.tsx') &&
+            !p.endsWith('page.tsx') &&
+            !p.includes('layout.tsx')
+        );
+
+        const forceStop = Date.now() >= agentSoftStopAt;
+        if (forceStop) {
+          if (!network.state.data.summary?.trim()) {
+            network.state.data.summary = truncateForAgentContext(
+              `Built ${fileCount} file(s) for: ${normalizedPrompt.slice(0, 180)}`,
+              500
+            );
+          }
+          return;
+        }
+
+        if (hasPage) {
+          if (!network.state.data.summary?.trim()) {
+            network.state.data.summary = truncateForAgentContext(
+              `Updated the app (${fileCount} file(s) touched).`,
+              500
+            );
+          }
+          return;
+        }
+
+        const summary = network.state.data.summary?.trim();
+        if (summary && hasAppComponents && !hasPage) {
+          return codeAgent;
+        }
+        if (summary && hasAppComponents && fileCount >= 8) {
+          if (!network.state.data.summary?.trim()) {
+            network.state.data.summary = truncateForAgentContext(
+              'Components are ready; wiring the main page next.',
+              500
+            );
+          }
+          return codeAgent;
+        }
+        if (summary && !hasAppComponents && fileCount === 0) {
           return;
         }
         return codeAgent;
       },
     });
 
-    type RunSuccess = {
-      result: Awaited<ReturnType<typeof network.run>>;
+    type AgentRunMeta = {
+      summary: string;
       fragmentTitle: string;
       userResponse: string;
+      filesWritten: number;
     };
 
-    let runSuccess: RunSuccess | null = null;
+    let agentMeta: AgentRunMeta | undefined;
 
     try {
       const estimatedInputTokens = estimateInputTokens({
         userPrompt: `${normalizedPrompt}\n\n${graphContext}`,
-        systemPrompts: [PROMPT, FRAGMENT_TITLE_PROMPT, RESPONSE_PROMPT],
+        systemPrompts: [PROMPT],
         messages: boundedMessages,
         files: boundedFiles,
       });
@@ -530,6 +817,9 @@ export const codeAgentFunction = inngest.createFunction(
         }
       );
       if (!creditReservation.ok) {
+        await step.run('release-queue-insufficient-credits', async () => {
+          await finishGenerationSession(event.data.projectId);
+        });
         return {
           url: '',
           title: '',
@@ -540,67 +830,188 @@ export const codeAgentFunction = inngest.createFunction(
         };
       }
 
-      runSuccess = await (async () => {
-        const runInput = `${normalizedPrompt}
-
-<graph_context>
-${graphContext}
-</graph_context>`;
-        const result = await network.run(runInput, { state: state });
-        const safeSummary =
-          (result.state.data.summary || '').trim() ||
-          `Task: ${normalizedPrompt}\n\nProvide a concise summary of what was built.`;
-
-        const fragmentTitleGenerator = createAgent({
-          name: 'fragment-title-generator',
-          description:
-            'Generates a title for the code fragment based on the task summary',
-          system: FRAGMENT_TITLE_PROMPT,
-          model: fragmentTitleModel,
-        });
-        const responseGenerator = createAgent({
-          name: 'response-generator',
-          description: 'Generates a response based on the task summary',
-          system: RESPONSE_PROMPT,
-          model: responseModel,
-        });
-
-        // Run sequentially: parallel `step.ai.infer` calls reorder generator opcodes
-        // and break Inngest replay/finalization ("error validating generator opcode").
-        const { output: fragmentTitleOutput } =
-          await fragmentTitleGenerator.run(safeSummary);
-        const { output: responseMessageOutput } =
-          await responseGenerator.run(safeSummary);
-
-        const parseFragmentTitle = () => {
-          const output = fragmentTitleOutput[0];
-          if (output.type !== 'text') {
-            return 'Fragment';
+      generationStatusMessageId = await step.run(
+        'generation-status-start',
+        async () => {
+          if (preCreatedStatusId) {
+            await pushGenerationStep(
+              preCreatedStatusId,
+              'Reserving credits',
+              { headline: 'Preparing your project…', markPreviousDone: false }
+            );
+            return preCreatedStatusId;
           }
-          if (Array.isArray(output.content)) {
-            return output.content.map((txt) => txt).join('');
-          }
-          return output.content;
-        };
+          const msg = await createGenerationStatusMessage(
+            event.data.projectId,
+            defaultGenerationProgress('Preparing your project…')
+          );
+          return msg.id;
+        }
+      );
+      generationProgressRef.messageId = generationStatusMessageId;
 
-        const parseResponseMessage = () => {
-          const output = responseMessageOutput[0];
-          if (output.type !== 'text') {
-            return 'Here you go! I built a custom Next.js app based on your request. Check it out and let me know if you need any changes.';
-          }
-          if (Array.isArray(output.content)) {
-            return output.content.map((txt) => txt).join('');
-          }
-          return output.content;
-        };
+      await step.run('generation-status-coding', async () => {
+        if (!generationStatusMessageId) return { ok: false as const };
+        await pushGenerationStep(
+          generationStatusMessageId,
+          'Analyzing your request',
+          { headline: 'Planning build…', markPreviousDone: false }
+        );
+        await pushGenerationStep(
+          generationStatusMessageId,
+          'Writing application code',
+          { headline: 'Building…' }
+        );
+        return { ok: true as const };
+      });
 
-        return {
-          result,
-          fragmentTitle: parseFragmentTitle(),
-          userResponse: parseResponseMessage(),
-        };
-      })();
+      await step.run('generation-status-agent-launch', async () => {
+        if (!generationStatusMessageId) return { ok: false as const };
+        await pushGenerationStep(
+          generationStatusMessageId,
+          'Running AI agent (file edits appear below)',
+          { headline: 'Building…' }
+        );
+        return { ok: true as const };
+      });
+
+      const runInput = [
+        normalizedPrompt,
+        referenceImagePrompt,
+        `<graph_context>\n${graphContext}\n</graph_context>`,
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+
+      /**
+       * AgentKit must call step.run for each LLM/tool round at the function level.
+       * Wrapping network.run in an outer step.run breaks nested steps and hangs after
+       * generation-status-coding (Inngest shows null, no file output).
+       */
+      const statusIdForHeartbeat = generationStatusMessageId;
+      let heartbeatTick = 0;
+      const heartbeat = statusIdForHeartbeat
+        ? setInterval(() => {
+            heartbeatTick += 1;
+            const labels = [
+              'AI is planning the layout…',
+              'AI is writing components…',
+              'AI is still working…',
+            ];
+            void pushGenerationStep(
+              statusIdForHeartbeat,
+              labels[heartbeatTick % labels.length]!,
+              { headline: 'Building…', markPreviousDone: false }
+            ).catch((e) => {
+              console.warn('[code-agent] heartbeat update failed:', e);
+            });
+          }, 22_000)
+        : null;
+
+      const hardLimitMs =
+        codeAgentRunTimeoutMs() + codeAgentSoftStopBeforeTimeoutMs() / 3;
+
+      let agentResult;
+      try {
+        agentResult = await withTimeout(
+          network.run(runInput, { state }),
+          hardLimitMs,
+          'code-agent network'
+        );
+      } finally {
+        if (heartbeat) clearInterval(heartbeat);
+      }
+
+      const files = agentResult.state.data.files || {};
+      const safeSummary =
+        (agentResult.state.data.summary || '').trim() ||
+        `Task: ${normalizedPrompt}\n\nProvide a concise summary of what was built.`;
+
+      agentMeta = {
+        summary: truncateForAgentContext(safeSummary, 2_000),
+        fragmentTitle: truncateForAgentContext(
+          deriveFragmentTitle(normalizedPrompt, safeSummary),
+          120
+        ),
+        userResponse: truncateForAgentContext(
+          deriveUserResponse(normalizedPrompt, safeSummary),
+          2_000
+        ),
+        filesWritten: Object.keys(files).length,
+      };
     } catch (err) {
+      const isTimeoutError =
+        err instanceof AgentRunTimeoutError ||
+        err instanceof SandboxCommandTimeoutError;
+
+      if (isTimeoutError) {
+        const recovered = await step.run('recover-agent-timeout', async () => {
+          const sandboxFiles = await snapshotSandboxProjectFiles(sandboxId);
+          if (!hasCustomSourceFiles(sandboxFiles)) return null;
+          const partialSummary = truncateForAgentContext(
+            `Built from your request: ${normalizedPrompt.slice(0, 240)}`,
+            500
+          );
+          return {
+            summary: partialSummary,
+            fragmentTitle: truncateForAgentContext(
+              deriveFragmentTitle(normalizedPrompt, partialSummary),
+              120
+            ),
+            userResponse: truncateForAgentContext(
+              `${deriveUserResponse(normalizedPrompt, partialSummary)}${AGENT_TIMEOUT_RECOVERED_NOTE}`,
+              2_000
+            ),
+            filesWritten: Object.keys(sandboxFiles).length,
+          };
+        });
+        if (recovered) {
+          agentMeta = recovered;
+        }
+      }
+
+      if (!agentMeta) {
+      await step.run('clear-generation-status-on-error', async () => {
+        await finishGenerationSession(
+          event.data.projectId,
+          generationStatusMessageId
+        );
+      });
+
+      if (isInngestStepPayloadTooLargeError(err)) {
+        await step.run('save-step-payload-error', async () => {
+          if (userId) {
+            try {
+              await refundFailedGenerationCredits({
+                userId,
+                chargeCorrelationId,
+                correlationId: `inngest_gen_payload_refund:${runId}`,
+                metadata: {
+                  inngestRunId: runId,
+                  projectId: event.data.projectId,
+                },
+              });
+            } catch (e) {
+              console.error('[code-agent] Credit refund failed:', e);
+            }
+          }
+          return prisma.message.create({
+            data: {
+              projectId: event.data.projectId,
+              content: STEP_PAYLOAD_TOO_LARGE_USER_MESSAGE,
+              role: 'ASSISTANT',
+              type: 'ERROR',
+            },
+          });
+        });
+        return {
+          url: '',
+          title: '',
+          files: {},
+          summary: '',
+          stepPayloadTooLarge: true as const,
+        };
+      }
       if (isProviderRateLimitError(err)) {
         await step.run('save-provider-rate-limit', async () =>
           prisma.message.create({
@@ -639,6 +1050,40 @@ ${graphContext}
           invalidRequest: true as const,
         };
       }
+      if (isTimeoutError) {
+        await step.run('save-agent-timeout', async () => {
+          if (userId) {
+            try {
+              await refundFailedGenerationCredits({
+                userId,
+                chargeCorrelationId,
+                correlationId: `inngest_gen_timeout_refund:${runId}`,
+                metadata: {
+                  inngestRunId: runId,
+                  projectId: event.data.projectId,
+                },
+              });
+            } catch (e) {
+              console.error('[code-agent] Credit refund failed:', e);
+            }
+          }
+          return prisma.message.create({
+            data: {
+              projectId: event.data.projectId,
+              content: AGENT_TIMEOUT_USER_MESSAGE,
+              role: 'ASSISTANT',
+              type: 'ERROR',
+            },
+          });
+        });
+        return {
+          url: '',
+          title: '',
+          files: {},
+          summary: '',
+          agentTimeout: true as const,
+        };
+      }
       if (isAgentKitToolArgumentsParseError(err)) {
         await step.run('save-tool-arguments-parse-error', async () => {
           if (userId) {
@@ -675,32 +1120,132 @@ ${graphContext}
         };
       }
       throw err;
+      }
     }
 
-    const { result, fragmentTitle, userResponse } = runSuccess;
+    const { summary, fragmentTitle, userResponse } = agentMeta;
 
-    const stateFilesFromRun = result.state.data.files || {};
+    await step.run('generation-status-preview', async () => {
+      if (!generationStatusMessageId) return;
+      await pushGenerationStep(
+        generationStatusMessageId,
+        'Syncing files to preview',
+        { headline: 'Building preview…' }
+      );
+      await completeGenerationSteps(
+        generationStatusMessageId,
+        'Building preview…'
+      );
+    });
 
-    const { sandboxUrl, sandboxFiles } = await step.run(
+    const pageEnsure = await step.run('ensure-app-page', async () => {
+      const result = await ensureAppPageForPreview({
+        sandboxId,
+        userPrompt: normalizedPrompt,
+      });
+      if (
+        result.ok &&
+        result.source !== 'existing' &&
+        generationStatusMessageId
+      ) {
+        await pushGenerationStep(
+          generationStatusMessageId,
+          result.source === 'auto-wire'
+            ? `Connected ${result.pagePath} to your components`
+            : `Created ${result.pagePath} for preview`,
+          { headline: 'Finishing preview…' }
+        );
+      }
+      return {
+        ok: result.ok,
+        pagePath: result.ok ? result.pagePath : '',
+        source: result.ok ? result.source : '',
+      };
+    });
+
+    const { sandboxUrl, previewReady } = await step.run(
       'finalize-sandbox',
       async () => {
-        const sandbox = await getSandbox(sandboxId);
-        const host = sandbox.getHost(3000);
-        const url = `https://${host}`;
-        // Ensure disk matches agent state (writes use absolute paths; snapshot reads project root).
-        await syncSandboxFilesFromMap(sandboxId, stateFilesFromRun);
+        await ensureSandboxBootstrapFiles(sandboxId);
+
+        const pageAfterBootstrap = await ensureAppPageForPreview({
+          sandboxId,
+          userPrompt: normalizedPrompt,
+        });
+
         await refreshSandboxDevServer(sandboxId);
-        const files = await snapshotSandboxProjectFiles(sandbox);
-        return { sandboxUrl: url, sandboxFiles: files };
+        const { ready: previewReady, httpCode } =
+          await waitForSandboxPreviewReady(sandboxId);
+
+        if (!previewReady) {
+          console.warn(
+            `[code-agent] Preview not ready (HTTP ${httpCode}) for sandbox ${sandboxId}`
+          );
+        }
+
+        const sandbox = await getSandbox(sandboxId);
+        return {
+          sandboxUrl: `https://${sandbox.getHost(3000)}`,
+          previewReady,
+          pageSource: pageAfterBootstrap.ok ? pageAfterBootstrap.source : '',
+        };
       }
     );
 
-    await step.run('save-result', async () => {
-      const mergedFiles = mergeBootstrapIntoFileMap({
-        ...allFiles,
-        ...sandboxFiles,
-        ...stateFilesFromRun,
+    if (!pageEnsure.ok) {
+      await step.run('save-empty-generation-error', async () => {
+        if (userId) {
+          try {
+            await refundFailedGenerationCredits({
+              userId,
+              chargeCorrelationId,
+              correlationId: `inngest_gen_no_page_refund:${runId}`,
+              metadata: {
+                inngestRunId: runId,
+                projectId: event.data.projectId,
+              },
+            });
+          } catch (e) {
+            console.error('[code-agent] Credit refund failed:', e);
+          }
+        }
+        return prisma.message.create({
+          data: {
+            projectId: event.data.projectId,
+            content:
+              'The assistant did not write any app code (no components or page). Your credits have been returned. Try again with a specific request, e.g. "Build an admin dashboard in app/page.tsx".',
+            role: 'ASSISTANT',
+            type: 'ERROR',
+          },
+        });
       });
+      await step.run('finish-empty-generation', async () => {
+        await finishGenerationSession(
+          event.data.projectId,
+          generationStatusMessageId
+        );
+      });
+      return {
+        url: '',
+        title: '',
+        files: {},
+        summary: '',
+        noPageGenerated: true as const,
+      };
+    }
+
+    await step.run('save-result', async () => {
+      const sandboxFiles = await snapshotSandboxProjectFiles(sandboxId);
+      const baselineFiles = await loadInitialAgentFilesFromLatestFragment(
+        event.data.projectId
+      );
+      const mergedFiles = mergeBootstrapIntoFileMap({
+        ...baselineFiles,
+        ...sandboxFiles,
+      });
+
+      await syncSandboxFilesFromMap(sandboxId, mergedFiles);
+      await refreshSandboxDevServer(sandboxId);
 
       const created = await prisma.message.create({
         data: {
@@ -717,17 +1262,18 @@ ${graphContext}
           },
         },
       });
+      await finishGenerationSession(
+        event.data.projectId,
+        generationStatusMessageId
+      );
       return { messageId: created.id };
     });
 
     return {
       url: sandboxUrl,
       title: 'Fragment',
-      files: {
-        ...allFiles,
-        ...(result.state.data.files || {}),
-      },
-      summary: result.state.data.summary,
+      files: {},
+      summary,
     };
   }
 );

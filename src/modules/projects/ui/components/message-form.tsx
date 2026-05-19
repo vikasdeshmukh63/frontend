@@ -14,27 +14,38 @@ import { ChatAiSettingsButton } from '@/components/chat/chat-ai-settings';
 import { Usage } from './usage';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef } from 'react';
+import { isPersistedAttachmentId } from '@/lib/attachment-id';
+import {
+  ChatImageAttachments,
+  type UploadedChatAttachment,
+} from './chat-image-attachments';
 
 interface Props {
   projectId: string;
+  isGenerating?: boolean;
   prefillValue?: string | null;
   onPrefillConsumed?: () => void;
 }
 
 const formSchema = z.object({
-  value: z
-    .string()
-    .min(1, { message: 'Value is required' })
-    .max(10000, { message: 'Value is too long' }),
+  value: z.string().max(10000, { message: 'Value is too long' }),
 });
 
-export const MessageForm = ({ projectId, prefillValue, onPrefillConsumed }: Props) => {
+export const MessageForm = ({
+  projectId,
+  isGenerating = false,
+  prefillValue,
+  onPrefillConsumed,
+}: Props) => {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
 
-  const router = useRouter()
+  const router = useRouter();
 
-  const {data:usage} = useQuery(trpc.usage.status.queryOptions())
+  const { data: usage } = useQuery(trpc.usage.status.queryOptions());
+
+  const [attachments, setAttachments] = useState<UploadedChatAttachment[]>([]);
+  const [imageUploading, setImageUploading] = useState(false);
 
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
@@ -48,7 +59,6 @@ export const MessageForm = ({ projectId, prefillValue, onPrefillConsumed }: Prop
     const v = (prefillValue ?? '').trim();
     if (!v) return;
     form.setValue('value', v, { shouldValidate: true, shouldDirty: true });
-    // Focus for quick edit + regenerate
     setTimeout(() => textareaRef.current?.focus(), 0);
     onPrefillConsumed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -56,35 +66,62 @@ export const MessageForm = ({ projectId, prefillValue, onPrefillConsumed }: Prop
 
   const createMessage = useMutation(
     trpc.messages.create.mutationOptions({
-      onSuccess: () => {
+      onSuccess: (data) => {
         form.reset();
+        setAttachments([]);
         queryClient.invalidateQueries(
           trpc.messages.getMany.queryOptions({ projectId })
         );
-      queryClient.invalidateQueries(
-        trpc.usage.status.queryOptions()
-      )
+        queryClient.invalidateQueries(
+          trpc.messages.getQueue.queryOptions({ projectId })
+        );
+        queryClient.invalidateQueries(trpc.usage.status.queryOptions());
+        const row = data as { queued?: boolean; queuePosition?: number };
+        if (row.queued && row.queuePosition) {
+          toast.info(
+            `Message queued (#${row.queuePosition}). It will run when the current build finishes.`
+          );
+        }
       },
       onError: (error) => {
         toast.error(error.message || 'Something went wrong');
-        if(error.data?.code === "TOO_MANY_REQUESTS"){
-          router.push("/pricing")
+        if (error.data?.code === 'TOO_MANY_REQUESTS') {
+          router.push('/pricing');
         }
       },
     })
   );
 
   const onSubmit = async (values: z.infer<typeof formSchema>) => {
+    const text = values.value.trim();
+    const attachmentIds = attachments
+      .map((a) => a.id)
+      .filter(isPersistedAttachmentId);
+
+    if (!text && attachmentIds.length === 0) {
+      toast.error('Enter a message or attach an image');
+      return;
+    }
+
+    if (imageUploading) {
+      toast.error('Wait for images to finish uploading');
+      return;
+    }
+
     await createMessage.mutateAsync({
-      value: values.value,
+      value: text,
       projectId,
+      attachmentIds,
     });
   };
 
   const [isFocused, setIsFocused] = useState(false);
   const showUsage = !!usage;
   const isPending = createMessage.isPending;
-  const isButtonDisabled = isPending || !form.formState.isValid;
+  const hasContent =
+    form.watch('value').trim().length > 0 ||
+    attachments.some((a) => isPersistedAttachmentId(a.id));
+  const isButtonDisabled = isPending || !hasContent || imageUploading;
 
   return (
     <Form {...form}>
@@ -103,6 +140,13 @@ export const MessageForm = ({ projectId, prefillValue, onPrefillConsumed }: Prop
           showUsage && 'rounded-t-none'
         )}
       >
+        <ChatImageAttachments
+          projectId={projectId}
+          attachments={attachments}
+          onAttachmentsChange={setAttachments}
+          onUploadingChange={setImageUploading}
+          disabled={isPending || imageUploading}
+        />
         <FormField
           control={form.control}
           name="value"
@@ -111,17 +155,20 @@ export const MessageForm = ({ projectId, prefillValue, onPrefillConsumed }: Prop
               <TextareaAutosize
                 {...field}
                 ref={(el) => {
-                  // keep RHF ref and local ref
                   field.ref(el);
                   textareaRef.current = el;
                 }}
-                disabled={isPending}
+                disabled={false}
                 onFocus={() => setIsFocused(true)}
                 onBlur={() => setIsFocused(false)}
                 minRows={2}
                 maxRows={8}
                 className="w-full resize-none border-none bg-transparent pt-4 outline-none"
-                placeholder="What would you like to build"
+                placeholder={
+                  isGenerating
+                    ? 'Send another message — it will be queued…'
+                    : 'What would you like to build'
+                }
                 onKeyDown={(e) => {
                   if (e.key == 'Enter' && (e.ctrlKey || e.metaKey)) {
                     e.preventDefault();

@@ -35,11 +35,29 @@ function truncateText(text: string, maxChars: number): string {
 }
 
 export function boundMessagesForRateLimit(messages: Message[]): Message[] {
-  return messages.slice(-6).map((m) => {
+  return messages.slice(-4).map((m) => {
     if (!('content' in m)) return m;
     if (typeof m.content !== 'string') return m;
-    return { ...m, content: truncateText(m.content, 2_500) };
+    const maxChars = m.content.includes('http') ? 1_200 : 2_500;
+    return { ...m, content: truncateText(m.content, maxChars) };
   });
+}
+
+/** Keeps agent network state small so Inngest generator steps stay under size limits. */
+export function slimFilesForAgentState(
+  files: Record<string, string>
+): Record<string, string> {
+  const maxCharsPerFile = 400;
+  const out: Record<string, string> = {};
+  for (const [path, content] of Object.entries(files)) {
+    if (content.length <= maxCharsPerFile) {
+      out[path] = content;
+      continue;
+    }
+    out[path] =
+      `${content.slice(0, maxCharsPerFile)}\n/* truncated — use readFiles for full source */`;
+  }
+  return out;
 }
 
 export function boundFilesForRateLimit(

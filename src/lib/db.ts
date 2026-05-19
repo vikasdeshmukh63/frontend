@@ -15,12 +15,13 @@ function createPrismaClient() {
 /** True when the singleton matches the current generated schema (delegates wired). */
 function schemaDelegateOk(client: PrismaClient | undefined): boolean {
   if (!client) return false;
+  const delegates = client as unknown as {
+    user?: { findUnique: (...args: unknown[]) => Promise<unknown> };
+    messageAttachment?: { findMany: (...args: unknown[]) => Promise<unknown> };
+  };
   return (
-    typeof (
-      client as unknown as {
-        user?: { findUnique: (...args: unknown[]) => Promise<unknown> };
-      }
-    ).user?.findUnique === 'function'
+    typeof delegates.user?.findUnique === 'function' &&
+    typeof delegates.messageAttachment?.findMany === 'function'
   );
 }
 
@@ -39,7 +40,7 @@ function getSingletonPrismaClient(): PrismaClient {
   const created = createPrismaClient();
   if (!schemaDelegateOk(created)) {
     throw new Error(
-      'Prisma Client is outdated (missing User model). Run `npx prisma generate` and restart the dev server.'
+      'Prisma Client is outdated. Run `npx prisma generate` and restart the dev server.'
     );
   }
 

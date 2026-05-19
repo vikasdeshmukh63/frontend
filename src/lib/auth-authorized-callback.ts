@@ -19,6 +19,10 @@ export const authAuthorizedCallback: NonNullable<
   if (path.startsWith('/api/auth')) return true;
   if (path.startsWith('/api/inngest')) return true;
   if (path.startsWith('/api/razorpay/webhook')) return true;
+  /** Image upload + proxy must work for <img src="..."> while user is logged in. */
+  if (/^\/api\/projects\/[^/]+\/attachments/.test(path)) {
+    return !!auth?.user;
+  }
 
   const isEmailVerified = sessionEmailIsVerified(auth?.user?.emailVerified);
 

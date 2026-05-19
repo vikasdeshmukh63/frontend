@@ -52,6 +52,51 @@ function looksLikeEmbeddedImage(content: string): boolean {
   return false;
 }
 
+/** Catch SelectItem outside SelectContent — common agent mistake that crashes at runtime. */
+function validateShadcnSelectUsage(content: string): ProjectFileValidationResult {
+  if (!content.includes('SelectItem')) {
+    return { ok: true };
+  }
+
+  if (!content.includes('SelectContent')) {
+    return {
+      ok: false,
+      error:
+        'SelectItem must be used inside SelectContent. Structure: <Select><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="x">Label</SelectItem></SelectContent></Select>. Never put SelectItem beside the trigger or in a table without SelectContent.',
+    };
+  }
+
+  const firstContent = content.indexOf('SelectContent');
+  const firstItem = content.indexOf('SelectItem');
+  if (firstItem !== -1 && firstContent !== -1 && firstItem < firstContent) {
+    return {
+      ok: false,
+      error:
+        'SelectItem appears before SelectContent. Move every SelectItem inside <SelectContent>...</SelectContent>.',
+    };
+  }
+
+  return { ok: true };
+}
+
+function validateShadcnDropdownMenuUsage(
+  content: string
+): ProjectFileValidationResult {
+  if (!content.includes('DropdownMenuItem')) {
+    return { ok: true };
+  }
+
+  if (!content.includes('DropdownMenuContent')) {
+    return {
+      ok: false,
+      error:
+        'DropdownMenuItem must be inside DropdownMenuContent (DropdownMenu > DropdownMenuTrigger + DropdownMenuContent > items).',
+    };
+  }
+
+  return { ok: true };
+}
+
 export function validateProjectFileWrite(
   path: string,
   content: string
@@ -59,6 +104,13 @@ export function validateProjectFileWrite(
   const rel = path.trim().replace(/\\/g, '/');
   const lower = rel.toLowerCase();
   const ext = lower.includes('.') ? lower.slice(lower.lastIndexOf('.')) : '';
+
+  if (rel.startsWith('public/refs/') || rel.startsWith('refs/')) {
+    return {
+      ok: false,
+      error: `Cannot write "${rel}" — use the full HTTPS URL from <reference_images> in <img src="..."> instead of writing image files.`,
+    };
+  }
 
   if (isProtectedSandboxPath(rel)) {
     return {
@@ -87,7 +139,7 @@ export function validateProjectFileWrite(
   if (BINARY_EXTENSIONS.has(ext)) {
     return {
       ok: false,
-      error: `Cannot write binary "${rel}" via writeProjectFile. Reference images as "/mock/..." paths or use Tailwind/CSS placeholders — never embed base64 in the repo.`,
+      error: `Cannot write binary "${rel}" via writeProjectFile. For user uploads use the HTTPS URL from <reference_images>. Otherwise use "/mock/..." paths — never embed base64.`,
     };
   }
 
@@ -104,6 +156,14 @@ export function validateProjectFileWrite(
       ok: false,
       error: `File "${rel}" looks like base64 image data, not source code. Use paths like "/mock/listing-1.jpg" in mock data, or colored div placeholders — do not embed images in TS/TSX.`,
     };
+  }
+
+  if (rel.endsWith('.tsx') || rel.endsWith('.jsx')) {
+    const selectCheck = validateShadcnSelectUsage(content);
+    if (!selectCheck.ok) return selectCheck;
+
+    const menuCheck = validateShadcnDropdownMenuUsage(content);
+    if (!menuCheck.ok) return menuCheck;
   }
 
   return { ok: true };

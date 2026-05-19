@@ -14,12 +14,12 @@ const Page = () => {
             height={80}
             className="hidden md:block"
           />
-          <span className="text-4xl font-bold">Fingerchip</span>
+          <span className="text-4xl font-bold text-white">Fingerchip</span>
         </div>
-        <h1 className="text-center text-2xl font-bold md:text-5xl">
+        <h1 className="text-center text-2xl font-bold text-white md:text-5xl">
           Build Something with Fingerchip
         </h1>
-        <p className="text-muted-foreground text-center text-lg md:text-xl">
+        <p className="text-center text-lg text-white/75 md:text-xl">
           Create apps and websites by chatting with AI
         </p>
         <div className="mx-auto w-full max-w-3xl">

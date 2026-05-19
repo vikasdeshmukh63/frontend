@@ -31,7 +31,7 @@ export function FragmentWeb({ data }: Props) {
     setFrameState('loading');
     const timeout = window.setTimeout(() => {
       setFrameState((current) => (current === 'ready' ? current : 'error'));
-    }, 12000);
+    }, 30000);
 
     return () => window.clearTimeout(timeout);
   }, [fragmentKey, data.sandboxUrl]);
@@ -107,8 +107,9 @@ export function FragmentWeb({ data }: Props) {
                 Preview failed to load
               </p>
               <p className="text-muted-foreground mb-3">
-                The sandbox app may have a runtime/build error. Open it in a new tab to
-                inspect the exact error output.
+                The sandbox may still be compiling, the dev server may be down, or the app
+                has a build/runtime error. Wait a few seconds, click Refresh, or open in a
+                new tab to see the Next.js error overlay.
               </p>
               <Button
                 size="sm"
