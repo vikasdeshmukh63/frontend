@@ -15,7 +15,7 @@ import {
   RotateCcwIcon,
   XIcon,
 } from 'lucide-react';
-import Image from 'next/image';
+import { Build01Logo } from '@/components/build01-logo';
 import { ChatAttachmentImage } from './chat-attachment-image';
 import TextareaAutosize from 'react-textarea-autosize';
 import { useEffect, useState } from 'react';
@@ -220,14 +220,8 @@ const AssistantMessage = ({
       )}
     >
       <div className="mb-2 flex items-center gap-2 pl-2">
-        <Image
-          src="/logo.svg"
-          alt="Fingerchip Logo"
-          width={18}
-          height={18}
-          className="shrink-0"
-        />
-        <span className="text-sm font-medium">Fingerchip</span>
+        <Build01Logo variant="mark" height={18} className="shrink-0" />
+        <span className="text-sm font-medium">Build01</span>
         <span className="text-muted-foreground text-xs opacity-0 transition-opacity group-hover:opacity-100">
           {format(createdAt, "HH:mm 'on' MMM dd, yyyy")}
         </span>

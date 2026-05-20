@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Fragment } from '@/generated/prisma/client';
 import { CodeIcon, CrownIcon, EyeIcon } from 'lucide-react';
 import Link from 'next/link';
-import Image from 'next/image';
+import { Build01Logo } from '@/components/build01-logo';
 import { Suspense, useState } from 'react';
 import { FragmentWeb } from '../components/fragment-web';
 import MessagesContainer from '../components/messages-container';
@@ -37,11 +37,10 @@ function PreviewLoadingState() {
           style={{ animationDelay: '350ms' }}
         />
         <div className="relative flex size-20 items-center justify-center rounded-full bg-black/80 shadow-[0_0_30px_rgba(59,130,246,0.35)]">
-          <Image
-            src="/logo.svg"
-            alt="Fingerchip loading"
-            width={200}
-            height={200}
+          <Build01Logo
+            variant="mark"
+            height={40}
+            title="Build01 loading"
             className="animate-ping"
           />
         </div>

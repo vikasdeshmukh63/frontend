@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import Image from 'next/image';
+import { Build01Logo } from '@/components/build01-logo';
 import { Button } from '@/components/ui/button';
 import UserControl from '@/components/user-control';
 import { useScroll } from '@/hooks/use-scroll';
@@ -22,9 +22,8 @@ const Navbar = () => {
       )}
     >
       <div className="mx-auto flex w-full max-w-5xl items-center justify-between">
-        <Link href="/" className="flex items-center gap-3">
-          <Image src="/logo.svg" alt="Fingerchip" width={24} height={24} />
-          <span className="text-lg font-semibold">Fingerchip</span>
+        <Link href="/" className="flex items-center">
+          <Build01Logo height={28} variant="wordmark" />
         </Link>
 
         {!isSignedIn ? (

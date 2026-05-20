@@ -39,7 +39,7 @@ export async function sendEmailVerificationEmail(params: {
   await transporter.sendMail({
     from,
     to: params.to,
-    subject: 'Verify your Fingerchip email',
+    subject: 'Verify your Build01 email',
     text: `Confirm your email address by opening this link: ${params.verifyLink}`,
     html: `
       <p>Thanks for signing up. Please confirm your email address.</p>
@@ -65,7 +65,7 @@ export async function sendPasswordResetEmail(params: {
   await transporter.sendMail({
     from,
     to: params.to,
-    subject: 'Reset your Fingerchip password',
+    subject: 'Reset your Build01 password',
     text: `You requested a password reset. Open this link to continue: ${params.resetLink}`,
     html: `
       <p>You requested a password reset.</p>

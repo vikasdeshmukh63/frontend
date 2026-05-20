@@ -1,7 +1,7 @@
 'use client';
 
-import Image from 'next/image';
 import Script from 'next/script';
+import { Build01Logo } from '@/components/build01-logo';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { CrownIcon } from 'lucide-react';
@@ -154,15 +154,8 @@ const Page = () => {
       />
       <div className="mx-auto flex w-full max-w-3xl flex-col px-4">
         <section className="space-y-8 pt-[16vh] 2xl:pt-48">
-        <div className="flex items-center justify-center gap-2">
-          <Image
-            src="/logo.svg"
-            alt="Fingerchip"
-            width={80}
-            height={80}
-            className="hidden md:block"
-          />
-          <span className="text-4xl font-bold">Fingerchip</span>
+        <div className="flex items-center justify-center">
+          <Build01Logo height={48} variant="wordmark" />
         </div>
 
           <Card className="mx-auto w-full max-w-md gap-4">

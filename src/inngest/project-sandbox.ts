@@ -91,20 +91,37 @@ export async function ensureSandboxDevServerRunning(
   const code = probe.stdout.trim().slice(-3);
   if (code === '200' || code === '304') return;
 
-  await runSandboxCommand(
-    sandbox,
-    [
-      `cd ${SANDBOX_PROJECT_ROOT}`,
-      'nohup npm run dev -- -p 3000 -H 0.0.0.0 > /tmp/next-dev.log 2>&1 &',
-      'sleep 4',
-    ].join(' && '),
-    { timeoutMs: 45_000 }
-  );
+  /** Never throw: npm/curl may exit non-zero while the dev server still comes up (E2B CommandExitError). */
+  try {
+    await runSandboxCommand(
+      sandbox,
+      [
+        'set +e',
+        `cd "${SANDBOX_PROJECT_ROOT}" || true`,
+        '(nohup npm run dev -- -p 3000 -H 0.0.0.0 > /tmp/next-dev.log 2>&1 &)',
+        'sleep 4',
+        'exit 0',
+      ].join('; '),
+      { timeoutMs: 45_000 }
+    );
+  } catch (e) {
+    console.warn(
+      '[sandbox] ensureSandboxDevServerRunning: start command failed (ignored)',
+      e
+    );
+  }
 }
 
 /** Nudge the running dev server after bulk writes (best-effort). */
 export async function refreshSandboxDevServer(sandboxId: string): Promise<void> {
-  await ensureSandboxDevServerRunning(sandboxId);
+  try {
+    await ensureSandboxDevServerRunning(sandboxId);
+  } catch (e) {
+    console.warn(
+      '[sandbox] refreshSandboxDevServer: ensureSandboxDevServerRunning failed (ignored)',
+      e
+    );
+  }
   const sandbox = await Sandbox.connect(sandboxId);
   await sandbox.setTimeout(SANDBOX_TIMEOUT);
   try {
@@ -137,33 +154,38 @@ export async function waitForSandboxPreviewReady(
   let lastCode = '000';
 
   while (Date.now() - started < maxWaitMs) {
-    const result = await runSandboxCommand(
-      sandbox,
-      `curl -sS --max-time 12 -w "\\n__HTTP__%{http_code}" http://127.0.0.1:3000/ 2>/dev/null | tail -c 8000`,
-      { timeoutMs: 20_000 }
-    );
-    const raw = result.stdout;
-    const codeMatch = raw.match(/__HTTP__(\d{3})$/);
-    lastCode = codeMatch?.[1] ?? '000';
-    const body = raw.replace(/__HTTP__\d{3}$/, '');
-
-    const hasAppShell =
-      /<html[\s>]/i.test(body) &&
-      (body.includes('__next') ||
-        body.includes('<main') ||
-        body.includes('id="root"') ||
-        body.length > 400);
-    const isBuildError =
-      /Build Error|Application error|Module not found|Failed to compile/i.test(
-        body
+    try {
+      /** No `-S` and trailing `|| true`: avoid E2B CommandExitError on refused connection / compile errors. */
+      const result = await runSandboxCommand(
+        sandbox,
+        `bash -lc 'curl -s --max-time 12 -w "\\n__HTTP__%{http_code}" http://127.0.0.1:3000/ 2>/dev/null | tail -c 8000; exit 0'`,
+        { timeoutMs: 20_000 }
       );
+      const raw = result.stdout;
+      const codeMatch = raw.match(/__HTTP__(\d{3})$/);
+      lastCode = codeMatch?.[1] ?? '000';
+      const body = raw.replace(/__HTTP__\d{3}$/, '');
 
-    if (
-      (lastCode === '200' || lastCode === '304') &&
-      hasAppShell &&
-      !isBuildError
-    ) {
-      return { ready: true, httpCode: lastCode };
+      const hasAppShell =
+        /<html[\s>]/i.test(body) &&
+        (body.includes('__next') ||
+          body.includes('<main') ||
+          body.includes('id="root"') ||
+          body.length > 400);
+      const isBuildError =
+        /Build Error|Application error|Module not found|Failed to compile/i.test(
+          body
+        );
+
+      if (
+        (lastCode === '200' || lastCode === '304') &&
+        hasAppShell &&
+        !isBuildError
+      ) {
+        return { ready: true, httpCode: lastCode };
+      }
+    } catch (e) {
+      console.warn('[sandbox] waitForSandboxPreviewReady: probe failed', e);
     }
 
     await new Promise((r) => setTimeout(r, 3_000));

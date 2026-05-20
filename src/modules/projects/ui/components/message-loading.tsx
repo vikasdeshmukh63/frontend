@@ -1,17 +1,11 @@
-import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   parseGenerationProgress,
   type GenerationProgress,
 } from '@/lib/generation-progress';
 import { parseGenerationStatusHeadline } from '@/lib/generation-status';
-import {
-  CheckCircle2Icon,
-  CircleIcon,
-  Loader2Icon,
-  RefreshCwIcon,
-} from 'lucide-react';
-import Image from 'next/image';
+import { Build01Logo } from '@/components/build01-logo';
+import { CheckCircle2Icon, CircleIcon, Loader2Icon } from 'lucide-react';
 
 function BuildProgressTimeline({ progress }: { progress: GenerationProgress }) {
   const steps = progress.steps;
@@ -63,12 +57,8 @@ function BuildProgressTimeline({ progress }: { progress: GenerationProgress }) {
 
 export const MessageLoading = ({
   statusContent,
-  onRegenerate,
-  isRegenerating,
 }: {
   statusContent?: string;
-  onRegenerate?: () => void;
-  isRegenerating?: boolean;
 }) => {
   const progress = statusContent
     ? parseGenerationProgress(statusContent)
@@ -80,14 +70,8 @@ export const MessageLoading = ({
   return (
     <div className="group flex flex-col px-2 pb-4">
       <div className="mb-2 flex items-center gap-2 pl-2">
-        <Image
-          src="/logo.svg"
-          alt="Fingerchip"
-          width={18}
-          height={18}
-          className="shrink-0"
-        />
-        <span className="text-sm font-medium">Fingerchip</span>
+        <Build01Logo variant="mark" height={18} className="shrink-0" />
+        <span className="text-sm font-medium">Build01</span>
         <Loader2Icon className="text-muted-foreground size-3.5 animate-spin" />
       </div>
       <div className="flex flex-col gap-y-3 pl-8.5">
@@ -95,23 +79,6 @@ export const MessageLoading = ({
           <BuildProgressTimeline progress={progress} />
         ) : (
           <p className="text-muted-foreground animate-pulse text-sm">{headline}</p>
-        )}
-        {onRegenerate && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="w-fit gap-1.5 text-xs"
-            onClick={onRegenerate}
-            disabled={isRegenerating}
-          >
-            {isRegenerating ? (
-              <Loader2Icon className="size-3.5 animate-spin" />
-            ) : (
-              <RefreshCwIcon className="size-3.5" />
-            )}
-            Regenerate response
-          </Button>
         )}
       </div>
     </div>

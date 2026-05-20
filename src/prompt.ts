@@ -42,6 +42,7 @@ Environment:
 - Never use "@" inside readFiles or other file system operations — it will fail
 
 File Safety Rules:
+- Root routes app/page.tsx and src/app/page.tsx: if you use useState, useMemo, useEffect, other React hooks, next/navigation client hooks (useRouter, useSearchParams, …), or JSX props like onClick/onChange, the file MUST begin with 'use client'; as line 1 (blank line 2, imports from line 3). Omitting this causes a hard Next.js build error. Same rule for any app/**/*.tsx or src/app/**/*.tsx that contains that client-only code.
 - Client directive placement is STRICT:
   - If a file uses React hooks, browser APIs, event handlers, or client-only libs, it MUST include "use client".
   - "use client" MUST be the first non-empty line in the file.

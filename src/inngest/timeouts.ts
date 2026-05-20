@@ -72,6 +72,15 @@ type CommandRunOptions = {
   timeoutMs?: number;
 };
 
+/** E2B throws this when `commands.run` exits non-zero (see `e2b` CommandExitError). */
+export function isSandboxCommandExitError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: string }).name === 'CommandExitError'
+  );
+}
+
 export async function runSandboxCommand(
   sandbox: Sandbox,
   command: string,

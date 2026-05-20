@@ -63,7 +63,6 @@ const MessagesContainer = ({ projectId, setActiveFragment }: Props) => {
 
   const isGenerating = isProjectActivelyGenerating(messages, statusMessage);
   const statusContent = statusMessage?.content;
-  const lastUserMessage = visibleMessages.findLast((m) => m.role === 'USER');
   const hasStatusRow = Boolean(statusMessage);
 
   const { data: queueData } = useQuery({
@@ -149,12 +148,6 @@ const MessagesContainer = ({ projectId, setActiveFragment }: Props) => {
     })
   );
 
-  const handleRegenerateFromUser = (userMessageId: string) => {
-    if (regenerateMutation.isPending) return;
-    setRegeneratingMessageId(userMessageId);
-    regenerateMutation.mutate({ projectId, userMessageId });
-  };
-
   const handleRegenerateFromError = (assistantMessageId: string) => {
     if (regenerateMutation.isPending) return;
     setRegeneratingMessageId(assistantMessageId);
@@ -232,15 +225,7 @@ const MessagesContainer = ({ projectId, setActiveFragment }: Props) => {
             );
           })}
           {isGenerating && (
-            <MessageLoading
-              statusContent={statusContent}
-              onRegenerate={
-                lastUserMessage
-                  ? () => handleRegenerateFromUser(lastUserMessage.id)
-                  : undefined
-              }
-              isRegenerating={regenerateMutation.isPending}
-            />
+            <MessageLoading statusContent={statusContent} />
           )}
           <div ref={bottomRef} /> {/* Dummy div to scroll into view */}
         </div>

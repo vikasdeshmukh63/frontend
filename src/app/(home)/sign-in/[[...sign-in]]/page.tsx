@@ -78,7 +78,7 @@ const Page = () => {
         <div className="space-y-2 text-center">
           <h1 className="text-2xl font-semibold">Sign in</h1>
           <p className="text-muted-foreground text-sm">
-            Welcome back to Fingerchip
+            Welcome back to Build01
           </p>
         </div>
 

@@ -2,6 +2,7 @@ import 'server-only';
 
 import { prisma } from '@/lib/db';
 import { GENERATION_STATUS_PREFIX } from '@/lib/generation-status';
+import { reconcileAbandonedGenerationLock } from '@/lib/generation-reconcile';
 
 function staleGenerationMs(): number {
   const raw = process.env.STALE_GENERATION_LOCK_MS;
@@ -56,6 +57,7 @@ export async function clearOrphanedGenerationLocks(projectId: string): Promise<v
  */
 export async function releaseStaleGenerationLocks(projectId: string): Promise<void> {
   await clearOrphanedGenerationLocks(projectId);
+  await reconcileAbandonedGenerationLock(projectId);
 
   const { clearAllGenerationStatusMessages } = await import(
     '@/inngest/generation-status'

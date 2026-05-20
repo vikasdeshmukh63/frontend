@@ -24,6 +24,61 @@ export type ProjectFileValidationResult =
   | { ok: true }
   | { ok: false; error: string };
 
+const REACT_IMPORT_RE = /\bfrom\s+["']react["']/;
+
+const NEXT_NAV_IMPORT_RE = /\bfrom\s+["']next\/navigation["']/;
+
+/** Hooks / patterns that require a Client Component in the App Router. */
+const CLIENT_SYNTAX_RE = new RegExp(
+  [
+    '\\buse(State|Effect|Memo|Callback|Reducer|Ref|LayoutEffect|ImperativeHandle|Context|Transition|DeferredValue|SyncExternalStore|Id)\\b',
+    '\\buse(Params|SearchParams|Router|Pathname|SelectedLayoutSegment)\\b',
+    '\\bon(Click|Change|Submit|KeyDown|KeyUp|MouseDown|MouseUp|Input|Focus|Blur|Drag|Drop|PointerDown|PointerUp|Scroll|Wheel)=',
+  ].join('|'),
+  'i'
+);
+
+function contentImpliesClientComponent(content: string): boolean {
+  if (!CLIENT_SYNTAX_RE.test(content)) return false;
+  if (REACT_IMPORT_RE.test(content)) return true;
+  if (NEXT_NAV_IMPORT_RE.test(content)) return true;
+  return false;
+}
+
+function isAppRouterSourcePath(rel: string): boolean {
+  const n = rel.replace(/\\/g, '/').toLowerCase();
+  return n.startsWith('app/') || n.startsWith('src/app/');
+}
+
+function firstNonEmptyLine(content: string): string | undefined {
+  for (const line of content.split('\n')) {
+    const t = line.trim();
+    if (t.length > 0) return t;
+  }
+  return undefined;
+}
+
+export function hasUseClientDirective(content: string): boolean {
+  const first = firstNonEmptyLine(content);
+  if (!first) return false;
+  return /^["']use client["']\s*;?\s*$/.test(first);
+}
+
+/**
+ * If the model wrote client-only code without `"use client"`, prepend it so
+ * Next.js 15 does not fail the build (Server Component + hooks error).
+ */
+export function ensureUseClientDirective(rel: string, content: string): string {
+  const lower = rel.replace(/\\/g, '/').toLowerCase();
+  if (!lower.endsWith('.tsx') && !lower.endsWith('.jsx')) return content;
+  if (!isAppRouterSourcePath(lower)) return content;
+  if (hasUseClientDirective(content)) return content;
+  if (!contentImpliesClientComponent(content)) {
+    return content;
+  }
+  return `'use client';\n\n${content}`;
+}
+
 function byteLength(content: string): number {
   return Buffer.byteLength(content, 'utf8');
 }

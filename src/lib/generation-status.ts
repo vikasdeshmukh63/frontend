@@ -49,9 +49,14 @@ type MessageForGenerationCheck = {
  * Stops when we have a fragment OR an ERROR after the latest user message,
  * even if a stale status row was not deleted.
  */
+type StatusMessageWithAge = MessageForGenerationCheck & {
+  updatedAt?: Date | string;
+};
+
 export function isProjectActivelyGenerating(
   messages: MessageForGenerationCheck[],
-  statusMessage?: MessageForGenerationCheck
+  statusMessage?: StatusMessageWithAge,
+  options?: { staleStatusMs?: number }
 ): boolean {
   const visible = messages.filter((m) => !isGenerationStatusMessage(m));
   const lastUserIndex = visible.findLastIndex((m) => m.role === 'USER');
@@ -69,6 +74,17 @@ export function isProjectActivelyGenerating(
 
   /** Terminal assistant after the user prompt — run is done (ignore stale status rows). */
   if (hasTerminalAssistant) return false;
+
+  const staleMs = options?.staleStatusMs ?? 4 * 60 * 1000;
+  if (statusMessage?.updatedAt) {
+    const updated =
+      statusMessage.updatedAt instanceof Date
+        ? statusMessage.updatedAt.getTime()
+        : new Date(statusMessage.updatedAt).getTime();
+    if (Number.isFinite(updated) && Date.now() - updated > staleMs) {
+      return false;
+    }
+  }
 
   if (statusMessage || messages.some((m) => isGenerationStatusMessage(m))) {
     return true;

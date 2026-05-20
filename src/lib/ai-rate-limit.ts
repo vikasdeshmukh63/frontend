@@ -5,7 +5,19 @@ import { prisma } from '@/lib/db';
 import type { AiProviderId } from '@/lib/ai-catalog';
 import type { Message } from '@inngest/agent-kit';
 
-const INPUT_TOKEN_LIMIT_PER_MINUTE = 24_000;
+function readIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+/** Total input-token budget per minute per user+model (rolling window). */
+const INPUT_TOKEN_LIMIT_PER_MINUTE = readIntEnv('LOCAL_AI_INPUT_TPM', 120_000);
+
+/** Never charge more than this many "points" per generation for the limiter (system prompt is huge). */
+const MAX_POINTS_PER_REQUEST = readIntEnv('LOCAL_AI_MAX_POINTS_PER_REQUEST', 6_000);
+
 const REQUEST_RESERVE_TOKENS = 2_000;
 const CHARS_PER_TOKEN = 4;
 
@@ -35,10 +47,16 @@ function truncateText(text: string, maxChars: number): string {
 }
 
 export function boundMessagesForRateLimit(messages: Message[]): Message[] {
-  return messages.slice(-4).map((m) => {
+  return messages.slice(-3).map((m) => {
     if (!('content' in m)) return m;
     if (typeof m.content !== 'string') return m;
-    const maxChars = m.content.includes('http') ? 1_200 : 2_500;
+    const role = 'role' in m ? String(m.role) : 'user';
+    const maxChars =
+      role === 'assistant'
+        ? 900
+        : m.content.includes('http')
+          ? 800
+          : 1_400;
     return { ...m, content: truncateText(m.content, maxChars) };
   });
 }
@@ -119,10 +137,19 @@ export async function enforceLocalInputRateLimit(args: {
   model: string;
   estimatedInputTokens: number;
 }): Promise<void> {
+  if (
+    process.env.DISABLE_LOCAL_AI_RATE_LIMIT === '1' ||
+    process.env.DISABLE_LOCAL_AI_RATE_LIMIT === 'true'
+  ) {
+    return;
+  }
+
   const scope = args.userId ?? args.projectId;
+  const rawPoints = args.estimatedInputTokens + REQUEST_RESERVE_TOKENS;
+  /** Cap per request so one huge system prompt does not consume the whole minute bucket. */
   const points = Math.min(
     INPUT_TOKEN_LIMIT_PER_MINUTE,
-    args.estimatedInputTokens + REQUEST_RESERVE_TOKENS
+    Math.min(MAX_POINTS_PER_REQUEST, rawPoints)
   );
   const key = `${scope}:${args.provider}:${args.model}`;
 

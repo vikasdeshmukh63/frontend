@@ -8,8 +8,8 @@ import { ThemeProvider } from 'next-themes';
 import { AuthSessionProvider } from '@/components/providers/auth-session-provider';
 
 export const metadata: Metadata = {
-  title: 'Fingerchip',
-  description: 'Build Something with Fingerchip',
+  title: 'Build01',
+  description: 'Build Something with Build01',
 };
 
 export default function RootLayout({
