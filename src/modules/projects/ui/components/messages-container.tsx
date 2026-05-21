@@ -1,5 +1,4 @@
 import { useTRPC } from '@/trpc/client';
-import { useSuspenseQuery } from '@tanstack/react-query';
 import MessageCard from './message-card';
 import { MessageForm } from './message-form';
 import { useEffect, useRef, useState } from 'react';
@@ -8,19 +7,20 @@ import { MessageLoading } from './message-loading';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { isProjectNotificationMessage } from '@/modules/projects/lib/message-notifications';
-import {
-  findLatestFragmentMessage,
-  isGenerationStatusMessage,
-  isProjectActivelyGenerating,
-} from '@/lib/generation-status';
+import { isGenerationStatusMessage } from '@/lib/generation-status';
 import { QueueBanner } from './queue-banner';
 
 interface Props {
   projectId: string;
   setActiveFragment: (fragment: Fragment | null) => void;
+  onPreviewSyncingChange?: (syncing: boolean) => void;
 }
 
-const MessagesContainer = ({ projectId, setActiveFragment }: Props) => {
+const MessagesContainer = ({
+  projectId,
+  setActiveFragment,
+  onPreviewSyncingChange,
+}: Props) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const lastAssistantMessageIdRef = useRef<string | null>(null);
   const trpc = useTRPC();
@@ -34,84 +34,109 @@ const MessagesContainer = ({ projectId, setActiveFragment }: Props) => {
   const [regeneratingMessageId, setRegeneratingMessageId] = useState<
     string | null
   >(null);
-  const { data: messages } = useSuspenseQuery(
-    trpc.messages.getMany.queryOptions({ projectId })
-  );
-  const statusMessage = messages.find(isGenerationStatusMessage);
+
+  const messagesQuery = trpc.messages.getMany.queryOptions({ projectId });
+
+  const { data: chatPayload, refetch: refetchChat } = useQuery({
+    ...messagesQuery,
+    refetchInterval: (query) =>
+      query.state.data?.isGenerating ? 2_000 : false,
+  });
+
+  const messages = chatPayload?.messages ?? [];
+  const showGenerationLoading = chatPayload?.isGenerating ?? false;
+  const statusContent = [...messages]
+    .reverse()
+    .find(isGenerationStatusMessage)?.content;
+
   const visibleMessages = messages.filter(
     (m) => !isProjectNotificationMessage(m) && !isGenerationStatusMessage(m)
   );
 
-
-  useEffect(() => {
-    const latestFragment = findLatestFragmentMessage(messages);
-    if (
-      latestFragment?.fragment &&
-      latestFragment.id !== lastAssistantMessageIdRef.current
-    ) {
-      setActiveFragment(latestFragment.fragment);
-      lastAssistantMessageIdRef.current = latestFragment.id;
-      void queryClient.invalidateQueries(
-        trpc.projects.getOne.queryOptions({ id: projectId })
-      );
-    }
-  }, [messages, setActiveFragment, projectId, queryClient, trpc.projects.getOne]);
+  const { data: queueData } = useQuery({
+    ...trpc.messages.getQueue.queryOptions({ projectId }),
+    refetchInterval: showGenerationLoading ? 2_000 : false,
+  });
+  const queueItems = queueData?.items ?? [];
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length]);
-
-  const isGenerating = isProjectActivelyGenerating(messages, statusMessage);
-  const statusContent = statusMessage?.content;
-  const hasStatusRow = Boolean(statusMessage);
-
-  const { data: queueData } = useQuery({
-    ...trpc.messages.getQueue.queryOptions({ projectId }),
-    refetchInterval: hasStatusRow || isGenerating ? 2000 : false,
-  });
-  const queueItems = queueData?.items ?? [];
-  const serverRunActive = queueData?.isRunActive ?? false;
-  const shouldPollMessages = isGenerating || hasStatusRow || serverRunActive;
-
-  useEffect(() => {
-    if (!shouldPollMessages) return;
-    const id = window.setInterval(() => {
-      void queryClient.invalidateQueries(
-        trpc.messages.getMany.queryOptions({ projectId })
-      );
-      void queryClient.invalidateQueries(
-        trpc.messages.getQueue.queryOptions({ projectId })
-      );
-    }, 1200);
-    return () => window.clearInterval(id);
-  }, [
-    shouldPollMessages,
-    projectId,
-    queryClient,
-    trpc.messages.getMany,
-    trpc.messages.getQueue,
-  ]);
+  }, [messages.length, showGenerationLoading]);
 
   const revertMutation = useMutation(
     trpc.messages.revertToFragment.mutationOptions({
-      onSuccess: (msg) => {
-        queryClient.invalidateQueries(trpc.messages.getMany.queryOptions({ projectId }));
-        if (msg.fragment) setActiveFragment(msg.fragment);
-        toast.success('Reverted');
+      onMutate: async () => {
+        onPreviewSyncingChange?.(true);
+        await queryClient.cancelQueries(messagesQuery);
+        const previous = queryClient.getQueryData(messagesQuery.queryKey);
+        if (previous && typeof previous === 'object' && 'messages' in previous) {
+          queryClient.setQueryData(messagesQuery.queryKey, {
+            ...previous,
+            isGenerating: false,
+            messages: previous.messages.filter(
+              (m) => !isGenerationStatusMessage(m)
+            ),
+          });
+        }
+        return { previous };
+      },
+      onSuccess: async (msg) => {
+        await refetchChat();
+        void queryClient.invalidateQueries(
+          trpc.messages.getQueue.queryOptions({ projectId })
+        );
+        if (msg.fragment) {
+          setActiveFragment(msg.fragment);
+          lastAssistantMessageIdRef.current = msg.id;
+        }
+        toast.success('Reverted to the previous version');
         setRevertingFragmentId(null);
       },
-      onError: (error) => {
+      onError: (error, _vars, context) => {
+        if (context?.previous) {
+          queryClient.setQueryData(messagesQuery.queryKey, context.previous);
+        }
         toast.error(error.message || 'Revert failed');
         setRevertingFragmentId(null);
+      },
+      onSettled: () => {
+        onPreviewSyncingChange?.(false);
       },
     })
   );
 
+  useEffect(() => {
+    const fragment = chatPayload?.latestFragment;
+    if (!fragment || revertMutation.isPending || revertingFragmentId) return;
+
+    setActiveFragment(fragment);
+    const latestMsg = [...messages]
+      .reverse()
+      .find((m) => m.fragment?.id === fragment.id);
+    if (latestMsg && latestMsg.id !== lastAssistantMessageIdRef.current) {
+      lastAssistantMessageIdRef.current = latestMsg.id;
+      void queryClient.invalidateQueries(
+        trpc.projects.getOne.queryOptions({ id: projectId })
+      );
+    }
+  }, [
+    chatPayload?.latestFragment,
+    messages,
+    setActiveFragment,
+    projectId,
+    queryClient,
+    trpc.projects.getOne,
+    revertMutation.isPending,
+    revertingFragmentId,
+  ]);
+
   const editMutation = useMutation(
     trpc.messages.editUserMessage.mutationOptions({
-      onSuccess: (data) => {
-        queryClient.invalidateQueries(trpc.messages.getMany.queryOptions({ projectId }));
-        queryClient.invalidateQueries(trpc.messages.getQueue.queryOptions({ projectId }));
+      onSuccess: async (data) => {
+        await refetchChat();
+        void queryClient.invalidateQueries(
+          trpc.messages.getQueue.queryOptions({ projectId })
+        );
         setEditingMessageId(null);
         setEditingDraft('');
         const row = data as { queued?: boolean; queuePosition?: number };
@@ -129,9 +154,11 @@ const MessagesContainer = ({ projectId, setActiveFragment }: Props) => {
 
   const regenerateMutation = useMutation(
     trpc.messages.regenerateResponse.mutationOptions({
-      onSuccess: (data) => {
-        queryClient.invalidateQueries(trpc.messages.getMany.queryOptions({ projectId }));
-        queryClient.invalidateQueries(trpc.messages.getQueue.queryOptions({ projectId }));
+      onSuccess: async (data) => {
+        await refetchChat();
+        void queryClient.invalidateQueries(
+          trpc.messages.getQueue.queryOptions({ projectId })
+        );
         setRegeneratingMessageId(null);
         if (data.queued && data.queuePosition) {
           toast.info(
@@ -153,6 +180,14 @@ const MessagesContainer = ({ projectId, setActiveFragment }: Props) => {
     setRegeneratingMessageId(assistantMessageId);
     regenerateMutation.mutate({ projectId, assistantMessageId });
   };
+
+  if (chatPayload === undefined) {
+    return (
+      <div className="text-muted-foreground flex flex-1 items-center justify-center p-6 text-sm">
+        Loading messages…
+      </div>
+    );
+  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -224,10 +259,10 @@ const MessagesContainer = ({ projectId, setActiveFragment }: Props) => {
               />
             );
           })}
-          {isGenerating && (
+          {showGenerationLoading && (
             <MessageLoading statusContent={statusContent} />
           )}
-          <div ref={bottomRef} /> {/* Dummy div to scroll into view */}
+          <div ref={bottomRef} />
         </div>
       </div>
       <div className="relative p-3 pt-1">
@@ -235,9 +270,10 @@ const MessagesContainer = ({ projectId, setActiveFragment }: Props) => {
         <QueueBanner items={queueItems} />
         <MessageForm
           projectId={projectId}
-          isGenerating={isGenerating}
+          isGenerating={showGenerationLoading}
           prefillValue={prefillValue}
           onPrefillConsumed={() => setPrefillValue(null)}
+          onMessageSent={() => void refetchChat()}
         />
       </div>
     </div>

@@ -4,7 +4,7 @@ import { prisma } from '@/lib/db';
 import { GENERATION_STATUS_PREFIX } from '@/lib/generation-status';
 import { finishGenerationSession } from '@/lib/code-agent-queue';
 
-const DEFAULT_ABANDONED_STATUS_MS = 4 * 60 * 1000;
+const DEFAULT_ABANDONED_STATUS_MS = 2 * 60 * 1000;
 
 function abandonedStatusMs(): number {
   const raw = process.env.ABANDONED_GENERATION_STATUS_MS;
@@ -46,16 +46,24 @@ export async function hasTerminalAssistantAfterLastUser(
   return !!terminal;
 }
 
-const ABANDONED_GENERATION_MESSAGE =
+export const ABANDONED_GENERATION_MESSAGE =
   'This build stopped before a result was saved (the background job may have ended early). Please try again or use Regenerate on your last message.';
+
+/** True for auto-reconcile ERROR rows (not real provider/sandbox failures). */
+export function isAbandonedGenerationErrorContent(content: string): boolean {
+  return content.trim() === ABANDONED_GENERATION_MESSAGE;
+}
 
 /**
  * Clears orphaned `[status]` rows when Inngest finished but never wrote a terminal
  * assistant message (common cause of infinite "Building…" in the UI).
  */
 export async function reconcileAbandonedGenerationLock(
-  projectId: string
+  projectId: string,
+  abandonedMs?: number,
+  options?: { createErrorIfOrphaned?: boolean }
 ): Promise<void> {
+  const thresholdMs = abandonedMs ?? abandonedStatusMs();
   const statusRow = await prisma.message.findFirst({
     where: {
       projectId,
@@ -73,12 +81,12 @@ export async function reconcileAbandonedGenerationLock(
   }
 
   const ageMs = Date.now() - statusRow.updatedAt.getTime();
-  if (ageMs < abandonedStatusMs()) return;
+  if (ageMs < thresholdMs) return;
 
   await finishGenerationSession(projectId, statusRow.id);
 
   const stillNoTerminal = !(await hasTerminalAssistantAfterLastUser(projectId));
-  if (stillNoTerminal) {
+  if (stillNoTerminal && options?.createErrorIfOrphaned !== false) {
     await prisma.message.create({
       data: {
         projectId,
@@ -97,9 +105,13 @@ export async function reconcileAbandonedGenerationLock(
 export async function endGenerationSessionSafely(params: {
   projectId: string;
   statusMessageId?: string;
+  /** Set false when caller already wrote a terminal assistant row. */
+  createErrorIfOrphaned?: boolean;
 }): Promise<void> {
   const hadTerminal = await hasTerminalAssistantAfterLastUser(params.projectId);
   await finishGenerationSession(params.projectId, params.statusMessageId);
+
+  if (params.createErrorIfOrphaned === false) return;
 
   if (!hadTerminal) {
     const nowHasTerminal = await hasTerminalAssistantAfterLastUser(
@@ -115,5 +127,46 @@ export async function endGenerationSessionSafely(params: {
         },
       });
     }
+  } else {
+    await pruneSupersededAbandonedErrors(params.projectId);
   }
+}
+
+/**
+ * Removes false "build stopped early" errors when a successful fragment exists
+ * for the latest user prompt.
+ */
+export async function pruneSupersededAbandonedErrors(
+  projectId: string
+): Promise<void> {
+  const lastUser = await prisma.message.findFirst({
+    where: { projectId, role: 'USER' },
+    orderBy: { createdAt: 'desc' },
+    select: { createdAt: true },
+  });
+  if (!lastUser) return;
+
+  const successWithFragment = await prisma.message.findFirst({
+    where: {
+      projectId,
+      role: 'ASSISTANT',
+      createdAt: { gt: lastUser.createdAt },
+      fragment: { isNot: null },
+      type: 'RESULT',
+    },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true },
+  });
+
+  if (!successWithFragment) return;
+
+  await prisma.message.deleteMany({
+    where: {
+      projectId,
+      role: 'ASSISTANT',
+      type: 'ERROR',
+      content: ABANDONED_GENERATION_MESSAGE,
+      createdAt: { gt: lastUser.createdAt },
+    },
+  });
 }

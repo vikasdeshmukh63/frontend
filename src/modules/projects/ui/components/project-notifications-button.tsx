@@ -21,13 +21,14 @@ interface Props {
 
 export function ProjectNotificationsButton({ projectId }: Props) {
   const trpc = useTRPC();
-  const { data: messages = [] } = useQuery(
+  const { data: chatPayload } = useQuery(
     trpc.messages.getMany.queryOptions(
       { projectId },
       { refetchInterval: 5000 }
     )
   );
 
+  const messages = chatPayload?.messages ?? [];
   const notifications = messages.filter(isProjectNotificationMessage);
   const unreadCount = notifications.length;
 

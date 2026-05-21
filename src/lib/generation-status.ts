@@ -44,6 +44,24 @@ type MessageForGenerationCheck = {
   content: string;
 };
 
+/** True when the latest user prompt already has a finished assistant reply. */
+export function hasTerminalReplyAfterLastUser(
+  messages: MessageForGenerationCheck[]
+): boolean {
+  const visible = messages.filter((m) => !isGenerationStatusMessage(m));
+  const lastUserIndex = visible.findLastIndex((m) => m.role === 'USER');
+  if (lastUserIndex < 0) return false;
+
+  return visible.slice(lastUserIndex + 1).some(
+    (m) =>
+      m.role === 'ASSISTANT' &&
+      !isGenerationStatusMessage(m) &&
+      (m.type === 'ERROR' ||
+        !!m.fragment ||
+        (m.type === 'RESULT' && m.content.trim().length > 0))
+  );
+}
+
 /**
  * True only while a run is actually in progress.
  * Stops when we have a fragment OR an ERROR after the latest user message,
@@ -58,24 +76,9 @@ export function isProjectActivelyGenerating(
   statusMessage?: StatusMessageWithAge,
   options?: { staleStatusMs?: number }
 ): boolean {
-  const visible = messages.filter((m) => !isGenerationStatusMessage(m));
-  const lastUserIndex = visible.findLastIndex((m) => m.role === 'USER');
-  if (lastUserIndex < 0) return false;
+  if (hasTerminalReplyAfterLastUser(messages)) return false;
 
-  const afterUser = visible.slice(lastUserIndex + 1);
-  const hasTerminalAssistant = afterUser.some(
-    (m) =>
-      m.role === 'ASSISTANT' &&
-      !isGenerationStatusMessage(m) &&
-      (m.type === 'ERROR' ||
-        !!m.fragment ||
-        (m.type === 'RESULT' && m.content.trim().length > 0))
-  );
-
-  /** Terminal assistant after the user prompt — run is done (ignore stale status rows). */
-  if (hasTerminalAssistant) return false;
-
-  const staleMs = options?.staleStatusMs ?? 4 * 60 * 1000;
+  const staleMs = options?.staleStatusMs ?? 90_000;
   if (statusMessage?.updatedAt) {
     const updated =
       statusMessage.updatedAt instanceof Date
@@ -86,12 +89,9 @@ export function isProjectActivelyGenerating(
     }
   }
 
-  if (statusMessage || messages.some((m) => isGenerationStatusMessage(m))) {
-    return true;
-  }
+  if (!statusMessage) return false;
 
-  /** User prompt sent; assistant has not replied yet (status row may not exist for a moment). */
-  return afterUser.length === 0;
+  return true;
 }
 
 /** Latest assistant message that carries a preview fragment (ignores transient [status] rows). */

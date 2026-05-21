@@ -7,7 +7,7 @@ import {
   dispatchCodeAgentRun,
   type CodeAgentReferenceImage,
 } from '@/lib/code-agent-dispatch';
-import { releaseStaleGenerationLocks } from '@/lib/generation-lock';
+import { generationStatusActiveWindowMs } from '@/lib/generation-idle';
 
 export type QueuePayload = {
   value: string;
@@ -16,10 +16,15 @@ export type QueuePayload = {
   userMessageId?: string;
 };
 
+/** Fast busy check for queue UI (no stale-lock sweep). */
 export async function isProjectGenerationBusy(
   projectId: string
 ): Promise<boolean> {
-  await releaseStaleGenerationLocks(projectId);
+  const processing = await prisma.codeAgentQueueItem.findFirst({
+    where: { projectId, status: 'PROCESSING' },
+    select: { id: true },
+  });
+  if (processing) return true;
 
   const statusRow = await prisma.message.findFirst({
     where: {
@@ -27,15 +32,12 @@ export async function isProjectGenerationBusy(
       role: 'ASSISTANT',
       content: { startsWith: GENERATION_STATUS_PREFIX },
     },
-    select: { id: true },
+    select: { id: true, updatedAt: true },
   });
-  if (statusRow) return true;
+  if (!statusRow) return false;
 
-  const processing = await prisma.codeAgentQueueItem.findFirst({
-    where: { projectId, status: 'PROCESSING' },
-    select: { id: true },
-  });
-  return !!processing;
+  const ageMs = Date.now() - statusRow.updatedAt.getTime();
+  return ageMs < generationStatusActiveWindowMs();
 }
 
 export async function countPendingQueueItems(projectId: string): Promise<number> {

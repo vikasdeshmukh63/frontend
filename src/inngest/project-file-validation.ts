@@ -1,4 +1,5 @@
 import {
+  isAppLayoutPath,
   isProtectedSandboxPath,
   isRootLayoutPath,
   isValidRootLayoutContent,
@@ -171,6 +172,13 @@ export function validateProjectFileWrite(
     return {
       ok: false,
       error: `Cannot modify "${rel}" — it is managed by the sandbox template. Edit app/page.tsx and components/ only. Never write app/layout.tsx or app/globals.css.`,
+    };
+  }
+
+  if (isAppLayoutPath(rel)) {
+    return {
+      ok: false,
+      error: `Cannot modify "${rel}" — App Router layout files are fixed. Change page/components only; do not alter layout shells.`,
     };
   }
 

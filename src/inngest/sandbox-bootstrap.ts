@@ -86,6 +86,15 @@ export function isRootLayoutPath(path: string): boolean {
   return rel === 'app/layout.tsx' || rel === 'src/app/layout.tsx';
 }
 
+/** Any App Router layout.tsx (root or segment) — agents must not replace these on follow-ups. */
+export function isAppLayoutPath(path: string): boolean {
+  const rel = normalizeSandboxRelativePath(path).toLowerCase();
+  if (!rel.endsWith('/layout.tsx') && rel !== 'app/layout.tsx' && rel !== 'src/app/layout.tsx') {
+    return false;
+  }
+  return rel.startsWith('app/') || rel.startsWith('src/app/');
+}
+
 export function isRootPagePath(path: string): boolean {
   const rel = normalizeSandboxRelativePath(path).toLowerCase();
   return rel === 'app/page.tsx' || rel === 'src/app/page.tsx';

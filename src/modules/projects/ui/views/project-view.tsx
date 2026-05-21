@@ -27,9 +27,9 @@ interface Props {
 }
 
 
-function PreviewLoadingState() {
+function PreviewLoadingState({ label = 'Loading preview…' }: { label?: string }) {
   return (
-    <div className="flex h-[calc(100vh-52px)] items-center justify-center bg-black">
+    <div className="flex h-[calc(100vh-52px)] flex-col items-center justify-center gap-3 bg-black">
       <div className="relative flex items-center justify-center">
         <span className="absolute size-28 rounded-full border border-primary/60 animate-ping" />
         <span
@@ -45,6 +45,7 @@ function PreviewLoadingState() {
           />
         </div>
       </div>
+      <p className="text-muted-foreground text-sm">{label}</p>
     </div>
   );
 }
@@ -57,6 +58,7 @@ const ProjectView = ({ projectId }: Props) => {
   const needsCredits = balance < genCost * 2;
 
   const [activeFragment, setActiveFragment] = useState<Fragment | null>(null);
+  const [previewSyncing, setPreviewSyncing] = useState(false);
   const [tabState, setTabState] = useState<'preview' | 'code'>('preview');
 
   return (
@@ -77,12 +79,11 @@ const ProjectView = ({ projectId }: Props) => {
           <ErrorBoundary
             fallback={<p>Something went wrong loading the messages</p>}
           >
-            <Suspense fallback={<p>Loading Messages...</p>}>
-              <MessagesContainer
-                projectId={projectId}
-                setActiveFragment={setActiveFragment}
-              />
-            </Suspense>
+            <MessagesContainer
+              projectId={projectId}
+              setActiveFragment={setActiveFragment}
+              onPreviewSyncingChange={setPreviewSyncing}
+            />
           </ErrorBoundary>
         </ResizablePanel>
         <ResizableHandle className="hover:bg-primary transition-colors" />
@@ -117,7 +118,13 @@ const ProjectView = ({ projectId }: Props) => {
               </div>
             </div>
             <TabsContent value="preview" className="mt-0">
-              {activeFragment ? <FragmentWeb data={activeFragment} /> : <PreviewLoadingState />}
+              {previewSyncing ? (
+                <PreviewLoadingState label="Reverting preview…" />
+              ) : activeFragment ? (
+                <FragmentWeb data={activeFragment} />
+              ) : (
+                <PreviewLoadingState />
+              )}
             </TabsContent>
             <TabsContent value="code" className="min-h-0">
               {!!activeFragment?.files && (

@@ -8,7 +8,13 @@ import {
   processNextCodeAgentQueueItem,
   tryDispatchCodeAgentRun,
 } from "@/lib/code-agent-queue";
-import { releaseStaleGenerationLocks } from "@/lib/generation-lock";
+import { reconcileGenerationOnRead } from "@/lib/generation-reconcile-read";
+import {
+  buildProjectMessagesPayload,
+  type ProjectMessageRow,
+} from "@/lib/project-messages-response";
+import { cancelActiveGenerationForProject } from "@/lib/generation-cancel";
+import { applyFragmentToProjectSandbox } from "@/lib/apply-fragment-to-sandbox";
 import {
   linkAttachmentsToMessage,
   type AttachmentRecord,
@@ -31,12 +37,9 @@ export const messagesRouter = createTRPCRouter({
       }),
     )
     .query(async ({ input, ctx }) => {
-      await releaseStaleGenerationLocks(input.projectId);
-      void processNextCodeAgentQueueItem(input.projectId).catch((e) => {
-        console.error('[messages.getMany] queue drain failed:', e);
-      });
+      await reconcileGenerationOnRead(input.projectId);
 
-      const messages = await prisma.message.findMany({
+      const rows = await prisma.message.findMany({
         where: {
           projectId: input.projectId,
           project: {
@@ -55,13 +58,15 @@ export const messagesRouter = createTRPCRouter({
         },
       });
 
-      return messages.map((message) => ({
+      const mapped: ProjectMessageRow[] = rows.map((message) => ({
         ...message,
         attachments: message.attachments.map((att) => ({
           ...att,
           publicUrl: buildAttachmentProxyUrl(input.projectId, att.id),
         })),
       }));
+
+      return buildProjectMessagesPayload(mapped);
     }),
   getQueue: protectedProcedure
     .input(
@@ -343,6 +348,11 @@ export const messagesRouter = createTRPCRouter({
         throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Unauthorized' });
       }
 
+      await cancelActiveGenerationForProject(input.projectId);
+
+      const { sandboxUrl, files: syncedFiles } =
+        await applyFragmentToProjectSandbox(input.projectId, fragment.files);
+
       const reverted = await prisma.message.create({
         data: {
           projectId: input.projectId,
@@ -351,9 +361,9 @@ export const messagesRouter = createTRPCRouter({
           type: 'RESULT',
           fragment: {
             create: {
-              sandboxUrl: fragment.sandboxUrl,
+              sandboxUrl,
               title: `Reverted: ${fragment.title}`.slice(0, 120),
-              files: fragment.files as object,
+              files: syncedFiles as object,
             },
           },
         },

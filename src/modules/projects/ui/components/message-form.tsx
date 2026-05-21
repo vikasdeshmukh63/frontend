@@ -25,6 +25,7 @@ interface Props {
   isGenerating?: boolean;
   prefillValue?: string | null;
   onPrefillConsumed?: () => void;
+  onMessageSent?: () => void;
 }
 
 const formSchema = z.object({
@@ -36,6 +37,7 @@ export const MessageForm = ({
   isGenerating = false,
   prefillValue,
   onPrefillConsumed,
+  onMessageSent,
 }: Props) => {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
@@ -66,16 +68,17 @@ export const MessageForm = ({
 
   const createMessage = useMutation(
     trpc.messages.create.mutationOptions({
-      onSuccess: (data) => {
+      onSuccess: async (data) => {
         form.reset();
         setAttachments([]);
-        queryClient.invalidateQueries(
+        await queryClient.invalidateQueries(
           trpc.messages.getMany.queryOptions({ projectId })
         );
-        queryClient.invalidateQueries(
+        void queryClient.invalidateQueries(
           trpc.messages.getQueue.queryOptions({ projectId })
         );
         queryClient.invalidateQueries(trpc.usage.status.queryOptions());
+        onMessageSent?.();
         const row = data as { queued?: boolean; queuePosition?: number };
         if (row.queued && row.queuePosition) {
           toast.info(

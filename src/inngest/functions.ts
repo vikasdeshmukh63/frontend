@@ -10,6 +10,12 @@ import { inngest } from './client';
 import { getSandbox, lastAssistantTextMessageContent } from './utils';
 import { z } from 'zod';
 import { PROMPT } from '@/prompt';
+import {
+  buildFollowUpRunContext,
+  FOLLOW_UP_EDIT_RULES,
+  listExistingSourcePaths,
+  projectHasExistingApp,
+} from '@/lib/follow-up-edit-prompt';
 import { prisma } from '@/lib/db';
 import {
   createAgentKitModel,
@@ -66,6 +72,7 @@ import {
   createGenerationStatusMessage,
   pushGenerationStep,
   completeGenerationSteps,
+  touchGenerationStatus,
 } from '@/inngest/generation-status';
 import { defaultGenerationProgress } from '@/lib/generation-progress';
 import { finishGenerationSession } from '@/lib/code-agent-queue';
@@ -279,6 +286,12 @@ export const codeAgentFunction = inngest.createFunction(
   {
     id: 'code-agent-v3',
     triggers: [{ event: 'code-agent/run' }],
+    cancelOn: [
+      {
+        event: 'code-agent/cancel',
+        if: 'async.data.projectId == event.data.projectId',
+      },
+    ],
     /** Stop after this many retries (Inngest default is 3; set explicitly so runs do not loop indefinitely). */
     retries: MAX_FUNCTION_RETRIES,
     onFailure: async ({ error, event }) => {
@@ -379,7 +392,23 @@ export const codeAgentFunction = inngest.createFunction(
       messageId: preCreatedStatusId,
     };
 
+    let generationHeartbeat: ReturnType<typeof setInterval> | null = null;
+    const startGenerationHeartbeat = (messageId: string) => {
+      if (generationHeartbeat) return;
+      void touchGenerationStatus(messageId).catch(() => {});
+      generationHeartbeat = setInterval(() => {
+        void touchGenerationStatus(messageId).catch(() => {});
+      }, 12_000);
+    };
+    const stopGenerationHeartbeat = () => {
+      if (generationHeartbeat) {
+        clearInterval(generationHeartbeat);
+        generationHeartbeat = null;
+      }
+    };
+
     let sessionEnded = false;
+    let generationSavedResult = false;
     const endSessionOnce = async () => {
       if (sessionEnded) return;
       sessionEnded = true;
@@ -387,6 +416,7 @@ export const codeAgentFunction = inngest.createFunction(
         await endGenerationSessionSafely({
           projectId,
           statusMessageId: generationStatusMessageId,
+          createErrorIfOrphaned: !generationSavedResult,
         });
       } catch (e) {
         console.error('[code-agent] endGenerationSessionSafely failed:', e);
@@ -397,6 +427,8 @@ export const codeAgentFunction = inngest.createFunction(
     let graphContext: string;
     let referenceImagePrompt: string;
     let resolvedPublicUrls: string[];
+    let hasExistingApp = false;
+    let existingSourcePaths: string[] = [];
 
     try {
     try {
@@ -405,6 +437,8 @@ export const codeAgentFunction = inngest.createFunction(
         graphContext,
         referenceImagePrompt,
         referenceImagePublicUrls: resolvedPublicUrls,
+        hasExistingApp,
+        existingSourcePaths,
       } = await step.run(
       'prepare-agent-session',
       async () => {
@@ -456,6 +490,8 @@ export const codeAgentFunction = inngest.createFunction(
           );
         }
 
+        const hasExistingApp = projectHasExistingApp(initialFiles);
+
         return {
           sandboxId,
           graphContext: truncateForAgentContext(graphContext, 3_000),
@@ -464,6 +500,8 @@ export const codeAgentFunction = inngest.createFunction(
             2_000
           ),
           referenceImagePublicUrls: referenceImagePublicUrlsList,
+          hasExistingApp,
+          existingSourcePaths: listExistingSourcePaths(initialFiles),
         };
       }
     ));
@@ -517,10 +555,20 @@ export const codeAgentFunction = inngest.createFunction(
       }
     );
 
+    const agentSystemPrompt = hasExistingApp
+      ? `${PROMPT}\n\n${FOLLOW_UP_EDIT_RULES}`
+      : PROMPT;
+
+    const writeFileToolHint = hasExistingApp
+      ? ' Follow-up mode: readFiles first; change only what the user asked; never rewrite whole files or layout shells.'
+      : '';
+
     const codeAgent = createAgent<AgentState>({
       name: 'code-agent',
-      description: 'An expert coding agent',
-      system: PROMPT,
+      description: hasExistingApp
+        ? 'An expert coding agent for minimal, targeted edits to an existing Next.js app'
+        : 'An expert coding agent',
+      system: agentSystemPrompt,
       model: primaryModel,
       tools: [
         //terminal tool
@@ -562,7 +610,7 @@ export const codeAgentFunction = inngest.createFunction(
         createTool({
           name: 'writeProjectFile',
           description:
-            'Write or overwrite one project file (preferred). Use one call per file — smaller payloads parse reliably.',
+            `Write or overwrite one project file (preferred). Use one call per file — smaller payloads parse reliably.${writeFileToolHint}`,
           parameters: z.object({
             path: z
               .string()
@@ -692,7 +740,7 @@ export const codeAgentFunction = inngest.createFunction(
               const sandbox = await getSandbox(sandboxId);
               const contents: { path: string; content: string }[] = [];
               let totalChars = 0;
-              const maxChars = 4_000;
+              const maxChars = hasExistingApp ? 12_000 : 4_000;
               for (const file of files.slice(0, 8)) {
                 const content = await sandbox.files.read(file);
                 const slice =
@@ -776,6 +824,11 @@ export const codeAgentFunction = inngest.createFunction(
           return;
         }
 
+        const summaryDone = network.state.data.summary?.trim();
+        if (hasExistingApp && fileCount > 0 && summaryDone) {
+          return;
+        }
+
         if (hasPage) {
           if (!network.state.data.summary?.trim()) {
             network.state.data.summary = truncateForAgentContext(
@@ -818,7 +871,7 @@ export const codeAgentFunction = inngest.createFunction(
     try {
       const estimatedInputTokens = estimateInputTokens({
         userPrompt: `${normalizedPrompt}\n\n${graphContext}`,
-        systemPrompts: [PROMPT],
+        systemPrompts: [agentSystemPrompt],
         messages: boundedMessages,
         files: boundedFiles,
       });
@@ -914,6 +967,10 @@ export const codeAgentFunction = inngest.createFunction(
       );
       generationProgressRef.messageId = generationStatusMessageId;
 
+      if (generationStatusMessageId) {
+        startGenerationHeartbeat(generationStatusMessageId);
+      }
+
       await step.run('generation-status-coding', async () => {
         if (!generationStatusMessageId) return { ok: false as const };
         await pushGenerationStep(
@@ -939,8 +996,16 @@ export const codeAgentFunction = inngest.createFunction(
         return { ok: true as const };
       });
 
+      const followUpBlock = hasExistingApp
+        ? buildFollowUpRunContext({
+            existingPaths: existingSourcePaths,
+            userPrompt: normalizedPrompt,
+          })
+        : '';
+
       const runInput = truncateForAgentContext(
         [
+          followUpBlock,
           normalizedPrompt,
           referenceImagePrompt,
           `<graph_context>\n${graphContext}\n</graph_context>`,
@@ -1275,6 +1340,9 @@ export const codeAgentFunction = inngest.createFunction(
         });
 
         const pageEnsure = await step.run('ensure-app-page', async () => {
+          if (hasExistingApp) {
+            return { ok: true as const, pagePath: 'app/page.tsx', source: 'existing' as const };
+          }
           const result = await ensureAppPageForPreview({
             sandboxId,
             userPrompt: normalizedPrompt,
@@ -1402,6 +1470,11 @@ export const codeAgentFunction = inngest.createFunction(
             event.data.projectId,
             generationStatusMessageId
           );
+          generationSavedResult = true;
+          const { pruneSupersededAbandonedErrors } = await import(
+            '@/lib/generation-reconcile'
+          );
+          await pruneSupersededAbandonedErrors(event.data.projectId);
           return { messageId: created.id };
         });
 
@@ -1511,6 +1584,7 @@ export const codeAgentFunction = inngest.createFunction(
       };
     }
     } finally {
+      stopGenerationHeartbeat();
       await endSessionOnce();
     }
   }

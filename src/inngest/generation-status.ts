@@ -119,3 +119,17 @@ export async function clearAllGenerationStatusMessages(projectId: string) {
     },
   });
 }
+
+/** Keeps `updatedAt` fresh so idle detection does not treat an active run as dead. */
+export async function touchGenerationStatus(messageId: string) {
+  const msg = await prisma.message.findUnique({
+    where: { id: messageId },
+    select: { content: true },
+  });
+  if (!msg?.content.startsWith(GENERATION_STATUS_PREFIX)) return;
+
+  await prisma.message.update({
+    where: { id: messageId },
+    data: { content: msg.content },
+  });
+}
