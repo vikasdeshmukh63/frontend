@@ -2,118 +2,66 @@ import { cn } from '@/lib/utils';
 
 export type Build01LogoVariant = 'wordmark' | 'mark';
 
+/** @deprecated Use `onDarkBackground` instead. Kept for call-site compatibility. */
 export type Build01LogoCutStroke = 'theme' | 'on-emphasis';
-
-const ORANGE = '#ff5e14';
 
 interface Build01LogoProps {
   className?: string;
-  /** Approximate rendered height in px; width scales with aspect ratio */
+  /** Approximate rendered height in px; width scales with aspect ratio. */
   height?: number;
+  /** Both variants use the same wordmark assets; `mark` renders slightly smaller. */
   variant?: Build01LogoVariant;
   /** Accessible name */
   title?: string;
   /**
-   * Stroke for the horizontal “cut” and 01 outline.
-   * `theme` — matches page background (light/dark via CSS variable).
-   * `on-emphasis` — dark translucent stroke for white wordmark on vivid hero backgrounds.
+   * When true, always shows `/logodark.png` (for vivid/dark sections like the home hero).
+   * When false, follows app theme: `logolight.png` in light mode, `logodark.png` in dark mode.
    */
+  onDarkBackground?: boolean;
+  /** @deprecated No-op; use `onDarkBackground` for hero sections. */
   cutStroke?: Build01LogoCutStroke;
 }
 
-function cutPaint(cutStroke: Build01LogoCutStroke): string {
-  return cutStroke === 'on-emphasis'
-    ? 'rgba(15, 23, 42, 0.42)'
-    : 'var(--background)';
-}
+const LOGO_LIGHT = '/logolight.png';
+const LOGO_DARK = '/logodark.png';
 
 export function Build01Logo({
   className,
   height = 28,
   variant = 'wordmark',
   title = 'Build01',
-  cutStroke = 'theme',
+  onDarkBackground = false,
+  cutStroke,
 }: Build01LogoProps) {
-  const stroke = cutPaint(cutStroke);
+  const resolvedHeight = variant === 'mark' ? Math.round(height * 0.72) : height;
 
-  if (variant === 'mark') {
+  if (onDarkBackground || cutStroke === 'on-emphasis') {
     return (
-      <svg
-        role="img"
-        aria-label={title}
-        viewBox="0 0 88 44"
-        xmlns="http://www.w3.org/2000/svg"
-        className={cn('shrink-0', className)}
-        style={{ height, width: 'auto' }}
-      >
-        <text
-          x="2"
-          y="33"
-          fontFamily="var(--font-sans), ui-sans-serif, system-ui, sans-serif"
-          fontWeight="900"
-          fontSize="34"
-          letterSpacing="-0.08em"
-          fill={ORANGE}
-          stroke={stroke}
-          strokeWidth="1.35"
-          paintOrder="stroke fill"
-        >
-          01
-        </text>
-        <line
-          x1="0"
-          y1="21"
-          x2="86"
-          y2="21"
-          stroke={stroke}
-          strokeWidth="2.5"
-        />
-      </svg>
+      <img
+        src={LOGO_DARK}
+        alt={title}
+        className={cn('h-auto w-auto max-w-full shrink-0', className)}
+        style={{ height: resolvedHeight }}
+      />
     );
   }
 
   return (
-    <svg
-      role="img"
-      aria-label={title}
-      viewBox="0 0 248 44"
-      xmlns="http://www.w3.org/2000/svg"
-      className={cn('shrink-0 text-foreground', className)}
-      style={{ height, width: 'auto', maxWidth: '100%' }}
-    >
-      <text
-        x="2"
-        y="33"
-        fontFamily="var(--font-sans), ui-sans-serif, system-ui, sans-serif"
-        fontWeight="900"
-        fontSize="34"
-        letterSpacing="-0.03em"
-        fill="currentColor"
-      >
-        Build
-      </text>
-      <text
-        x="136"
-        y="33"
-        fontFamily="var(--font-sans), ui-sans-serif, system-ui, sans-serif"
-        fontWeight="900"
-        fontSize="34"
-        letterSpacing="-0.07em"
-        fill={ORANGE}
-        stroke={stroke}
-        strokeWidth="1.35"
-        paintOrder="stroke fill"
-      >
-        01
-      </text>
-      <line
-        x1="0"
-        y1="21"
-        x2="248"
-        y2="21"
-        stroke={stroke}
-        strokeWidth="2.5"
+    <span className={cn('inline-flex shrink-0', className)} role="img" aria-label={title}>
+      <img
+        src={LOGO_LIGHT}
+        alt=""
+        aria-hidden
+        className="h-auto w-auto max-w-full dark:hidden"
+        style={{ height: resolvedHeight }}
       />
-    </svg>
+      <img
+        src={LOGO_DARK}
+        alt=""
+        aria-hidden
+        className="hidden h-auto w-auto max-w-full dark:block"
+        style={{ height: resolvedHeight }}
+      />
+    </span>
   );
 }

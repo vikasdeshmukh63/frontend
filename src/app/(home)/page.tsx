@@ -10,8 +10,7 @@ const Page = () => {
           <Build01Logo
             height={52}
             variant="wordmark"
-            className="text-white"
-            cutStroke="on-emphasis"
+            onDarkBackground
           />
         </div>
         <h1 className="text-center text-2xl font-bold text-white md:text-5xl">
