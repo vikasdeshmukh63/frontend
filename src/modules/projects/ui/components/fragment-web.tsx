@@ -6,26 +6,30 @@ import { useEffect, useState } from 'react';
 
 interface Props {
   data: Fragment;
+  /** Bump to reload iframe after live code edits sync to the sandbox. */
+  refreshKey?: number;
 }
 
 type FrameState = 'loading' | 'ready' | 'error';
 
-function previewSrc(sandboxUrl: string, fragmentId: string): string {
+function previewSrc(sandboxUrl: string, fragmentId: string, refreshKey: number): string {
   const separator = sandboxUrl.includes('?') ? '&' : '?';
-  return `${sandboxUrl}${separator}v=${encodeURIComponent(fragmentId)}`;
+  return `${sandboxUrl}${separator}v=${encodeURIComponent(fragmentId)}&r=${refreshKey}`;
 }
 
-export function FragmentWeb({ data }: Props) {
+export function FragmentWeb({ data, refreshKey = 0 }: Props) {
   const [fragmentKey, setFragmentKey] = useState(0);
   const [copied, setCopied] = useState(false);
   const [frameState, setFrameState] = useState<FrameState>('loading');
-  const iframeSrc = data.sandboxUrl ? previewSrc(data.sandboxUrl, data.id) : '';
+  const iframeSrc = data.sandboxUrl
+    ? previewSrc(data.sandboxUrl, data.id, refreshKey)
+    : '';
 
   useEffect(() => {
     // AI generations usually keep the same sandbox URL, so force iframe remount
-    // whenever a new fragment record is selected.
+    // whenever a new fragment record is selected or code is synced to the sandbox.
     setFragmentKey((prev) => prev + 1);
-  }, [data.id]);
+  }, [data.id, refreshKey]);
 
   useEffect(() => {
     setFrameState('loading');

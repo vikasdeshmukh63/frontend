@@ -1,6 +1,6 @@
 'use client';
 
-import { FileExplorer } from '@/components/file-explorer';
+import { FileExplorer, type FileCollection } from '@/components/file-explorer';
 import { Button } from '@/components/ui/button';
 import {
   ResizableHandle,
@@ -12,20 +12,30 @@ import { Fragment } from '@/generated/prisma/client';
 import { CodeIcon, CrownIcon, EyeIcon } from 'lucide-react';
 import Link from 'next/link';
 import { Build01Logo } from '@/components/build01-logo';
-import { Suspense, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FragmentWeb } from '../components/fragment-web';
 import MessagesContainer from '../components/messages-container';
 import { ProjectHeader } from '../components/project-header';
 import UserControl from '@/components/user-control';
 import { ErrorBoundary } from 'react-error-boundary';
 import { useTRPC } from '@/trpc/client';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import { ProjectNotificationsButton } from '../components/project-notifications-button';
+import { toast } from 'sonner';
 
 interface Props {
   projectId: string;
 }
 
+function stableStringifyFiles(files: FileCollection): string {
+  const sorted = Object.keys(files)
+    .sort()
+    .reduce<Record<string, string>>((acc, k) => {
+      acc[k] = files[k];
+      return acc;
+    }, {});
+  return JSON.stringify(sorted);
+}
 
 function PreviewLoadingState({ label = 'Loading preview…' }: { label?: string }) {
   return (
@@ -59,7 +69,117 @@ const ProjectView = ({ projectId }: Props) => {
 
   const [activeFragment, setActiveFragment] = useState<Fragment | null>(null);
   const [previewSyncing, setPreviewSyncing] = useState(false);
+  const [previewRefreshKey, setPreviewRefreshKey] = useState(0);
+  const [editorEpoch, setEditorEpoch] = useState(0);
   const [tabState, setTabState] = useState<'preview' | 'code'>('preview');
+
+  const activeFragmentIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeFragmentIdRef.current = activeFragment?.id ?? null;
+  }, [activeFragment?.id]);
+
+  const lastPreviewSyncPayloadRef = useRef('');
+  const pendingSyncFilesRef = useRef<FileCollection | null>(null);
+
+  useEffect(() => {
+    lastPreviewSyncPayloadRef.current = '';
+    pendingSyncFilesRef.current = null;
+  }, [activeFragment?.id]);
+
+  const explorerFiles = useMemo(
+    () => (activeFragment?.files as FileCollection | undefined) ?? {},
+    [activeFragment?.files, activeFragment?.id]
+  );
+
+  const saveFilesMutation = useMutation(
+    trpc.messages.saveFragmentFiles.mutationOptions({
+      onSuccess: async (data) => {
+        setActiveFragment((prev) =>
+          prev
+            ? {
+                ...prev,
+                sandboxUrl: data.sandboxUrl,
+                files: data.files as Fragment['files'],
+              }
+            : null
+        );
+        setPreviewRefreshKey((k) => k + 1);
+        setEditorEpoch((e) => e + 1);
+        lastPreviewSyncPayloadRef.current = stableStringifyFiles(
+          data.files as FileCollection
+        );
+        // Avoid refetch storm + editor churn; local state + DB are already aligned.
+        toast.success('Code saved');
+      },
+      onError: (error) => {
+        toast.error(error.message || 'Failed to save code');
+      },
+    })
+  );
+
+  const syncPreviewMutation = useMutation(
+    trpc.messages.syncFragmentFiles.mutationOptions({
+      onSuccess: (data) => {
+        setActiveFragment((prev) =>
+          prev ? { ...prev, sandboxUrl: data.sandboxUrl } : null
+        );
+        setPreviewRefreshKey((k) => k + 1);
+      },
+      onError: (error) => {
+        toast.error(error.message || 'Failed to update preview');
+      },
+    })
+  );
+
+  const flushPreviewSync = useCallback(
+    (files: FileCollection) => {
+      const fid = activeFragmentIdRef.current;
+      if (!fid) return;
+
+      if (syncPreviewMutation.isPending) {
+        pendingSyncFilesRef.current = files;
+        return;
+      }
+
+      const payload = stableStringifyFiles(files);
+      if (payload === lastPreviewSyncPayloadRef.current) return;
+
+      syncPreviewMutation.mutate(
+        { projectId, fragmentId: fid, files },
+        {
+          onSuccess: () => {
+            lastPreviewSyncPayloadRef.current = payload;
+          },
+          onSettled: () => {
+            const pending = pendingSyncFilesRef.current;
+            pendingSyncFilesRef.current = null;
+            if (pending) {
+              const nextPayload = stableStringifyFiles(pending);
+              if (nextPayload !== lastPreviewSyncPayloadRef.current) {
+                flushPreviewSync(pending);
+              }
+            }
+          },
+        }
+      );
+    },
+    [projectId, syncPreviewMutation]
+  );
+
+  const handlePreviewSync = flushPreviewSync;
+
+  const handleSaveFiles = useCallback(
+    (files: FileCollection) => {
+      const fid = activeFragmentIdRef.current;
+      if (!fid) return;
+      saveFilesMutation.mutate({
+        projectId,
+        fragmentId: fid,
+        files,
+      });
+    },
+    [projectId, saveFilesMutation]
+  );
 
   return (
     <div className="h-screen">
@@ -121,16 +241,29 @@ const ProjectView = ({ projectId }: Props) => {
               {previewSyncing ? (
                 <PreviewLoadingState label="Reverting preview…" />
               ) : activeFragment ? (
-                <FragmentWeb data={activeFragment} />
+                <FragmentWeb
+                  data={activeFragment}
+                  refreshKey={previewRefreshKey}
+                />
               ) : (
                 <PreviewLoadingState />
               )}
             </TabsContent>
-            <TabsContent value="code" className="min-h-0">
-              {!!activeFragment?.files && (
+            <TabsContent value="code" className="min-h-0 h-[calc(100vh-52px)]">
+              {activeFragment && Object.keys(explorerFiles).length > 0 ? (
                 <FileExplorer
-                  files={activeFragment.files as { [path: string]: string }}
+                  key={`${activeFragment.id}-${editorEpoch}`}
+                  fragmentId={activeFragment.id}
+                  files={explorerFiles}
+                  onPreviewSync={handlePreviewSync}
+                  onSave={handleSaveFiles}
+                  isSaving={saveFilesMutation.isPending}
+                  isSyncingPreview={syncPreviewMutation.isPending}
                 />
+              ) : (
+                <div className="text-muted-foreground flex h-full items-center justify-center text-sm">
+                  Generate a project to view and edit code
+                </div>
               )}
             </TabsContent>
           </Tabs>

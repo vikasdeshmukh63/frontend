@@ -15,6 +15,7 @@ import {
 } from "@/lib/project-messages-response";
 import { cancelActiveGenerationForProject } from "@/lib/generation-cancel";
 import { applyFragmentToProjectSandbox } from "@/lib/apply-fragment-to-sandbox";
+import { syncFragmentFilesToSandboxPreview } from "@/lib/sync-fragment-files-to-sandbox";
 import {
   linkAttachmentsToMessage,
   type AttachmentRecord,
@@ -28,6 +29,34 @@ const attachmentIdsSchema = z
   .array(z.string().uuid())
   .max(4)
   .optional();
+
+const fragmentFilesSchema = z.record(z.string(), z.string());
+
+async function assertProjectFragmentAccess(
+  fragmentId: string,
+  projectId: string,
+  userId: string
+) {
+  const fragment = await prisma.fragment.findUnique({
+    where: { id: fragmentId },
+    include: { message: { include: { project: true } } },
+  });
+
+  if (!fragment) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'Fragment not found' });
+  }
+  if (fragment.message.projectId !== projectId) {
+    throw new TRPCError({
+      code: 'BAD_REQUEST',
+      message: 'Fragment does not belong to this project',
+    });
+  }
+  if (fragment.message.project.userId !== userId) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Unauthorized' });
+  }
+
+  return fragment;
+}
 
 export const messagesRouter = createTRPCRouter({
   getMany: protectedProcedure
@@ -371,6 +400,74 @@ export const messagesRouter = createTRPCRouter({
       });
 
       return reverted;
+    }),
+  syncFragmentFiles: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        fragmentId: z.string().min(1),
+        files: fragmentFilesSchema,
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      await assertProjectFragmentAccess(
+        input.fragmentId,
+        input.projectId,
+        ctx.auth.userId
+      );
+
+      try {
+        return await syncFragmentFilesToSandboxPreview(
+          input.projectId,
+          input.files
+        );
+      } catch (error) {
+        console.error('[syncFragmentFiles] failed:', error);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Failed to update preview',
+        });
+      }
+    }),
+  saveFragmentFiles: protectedProcedure
+    .input(
+      z.object({
+        projectId: z.string().min(1),
+        fragmentId: z.string().min(1),
+        files: fragmentFilesSchema,
+      })
+    )
+    .mutation(async ({ input, ctx }) => {
+      await assertProjectFragmentAccess(
+        input.fragmentId,
+        input.projectId,
+        ctx.auth.userId
+      );
+
+      try {
+        // Same fast path as live preview — do not block on waitForSandboxPreviewReady
+        // (can run 60s+ or hang; breaks Save UX and serverless timeouts).
+        const { sandboxUrl, files } = await syncFragmentFilesToSandboxPreview(
+          input.projectId,
+          input.files
+        );
+
+        await prisma.fragment.update({
+          where: { id: input.fragmentId },
+          data: {
+            sandboxUrl,
+            files: files as object,
+          },
+        });
+
+        return { sandboxUrl, files };
+      } catch (error) {
+        console.error('[saveFragmentFiles] failed:', error);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: 'Failed to save code',
+        });
+      }
     }),
   create: protectedProcedure
     .input(

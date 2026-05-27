@@ -109,7 +109,11 @@ const MessagesContainer = ({
     const fragment = chatPayload?.latestFragment;
     if (!fragment || revertMutation.isPending || revertingFragmentId) return;
 
-    setActiveFragment(fragment);
+    setActiveFragment((current) => {
+      // Chat polls every few seconds; don't stomp in-progress code edits for the same fragment.
+      if (current?.id === fragment.id) return current;
+      return fragment;
+    });
     const latestMsg = [...messages]
       .reverse()
       .find((m) => m.fragment?.id === fragment.id);

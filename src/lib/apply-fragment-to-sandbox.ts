@@ -1,15 +1,11 @@
 import 'server-only';
 
-import { Sandbox } from '@e2b/code-interpreter';
-
 import { prisma } from '@/lib/db';
-import { mergeBootstrapIntoFileMap } from '@/inngest/sandbox-bootstrap';
 import {
-  refreshSandboxDevServer,
-  resolveOrCreateSandboxId,
-  syncSandboxFilesFromMap,
-  waitForSandboxPreviewReady,
-} from '@/inngest/project-sandbox';
+  normalizeFragmentFiles,
+  syncFragmentFilesToSandboxPreview,
+} from '@/lib/sync-fragment-files-to-sandbox';
+import { resolveOrCreateSandboxId, waitForSandboxPreviewReady } from '@/inngest/project-sandbox';
 
 function fragmentFilesToRecord(files: unknown): Record<string, string> {
   if (!files || typeof files !== 'object' || Array.isArray(files)) return {};
@@ -28,15 +24,14 @@ export async function applyFragmentToProjectSandbox(
   projectId: string,
   files: unknown
 ): Promise<{ sandboxUrl: string; files: Record<string, string> }> {
+  const mergedFiles = normalizeFragmentFiles(fragmentFilesToRecord(files));
+  const { sandboxUrl } = await syncFragmentFilesToSandboxPreview(
+    projectId,
+    mergedFiles
+  );
+
   const sandboxId = await resolveOrCreateSandboxId(projectId);
-  const mergedFiles = mergeBootstrapIntoFileMap(fragmentFilesToRecord(files));
-
-  await syncSandboxFilesFromMap(sandboxId, mergedFiles);
-  await refreshSandboxDevServer(sandboxId);
   await waitForSandboxPreviewReady(sandboxId, 90_000);
-
-  const sandbox = await Sandbox.connect(sandboxId);
-  const sandboxUrl = `https://${sandbox.getHost(3000)}`;
 
   await prisma.project.update({
     where: { id: projectId },

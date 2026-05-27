@@ -23,7 +23,7 @@ const Navbar = () => {
     >
       <div className="mx-auto flex w-full max-w-5xl items-center justify-between">
         <Link href="/" className="flex items-center">
-          <Build01Logo height={28} variant="wordmark" />
+          <Build01Logo height={28} variant="wordmark" onDarkBackground={!isScrolled} />
         </Link>
 
         {!isSignedIn ? (

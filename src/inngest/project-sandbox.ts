@@ -112,7 +112,7 @@ export async function ensureSandboxDevServerRunning(
   }
 }
 
-/** Nudge the running dev server after bulk writes (best-effort). */
+/** Nudge the running dev server after bulk writes (best-effort). Never throws. */
 export async function refreshSandboxDevServer(sandboxId: string): Promise<void> {
   try {
     await ensureSandboxDevServerRunning(sandboxId);
@@ -122,22 +122,29 @@ export async function refreshSandboxDevServer(sandboxId: string): Promise<void> 
       e
     );
   }
-  const sandbox = await Sandbox.connect(sandboxId);
-  await sandbox.setTimeout(SANDBOX_TIMEOUT);
   try {
-    await runSandboxCommand(
-      sandbox,
-      [
-        `touch ${SANDBOX_PROJECT_ROOT}/app/page.tsx 2>/dev/null || true`,
-        `touch ${SANDBOX_PROJECT_ROOT}/src/app/page.tsx 2>/dev/null || true`,
-        'curl -s --max-time 20 -o /dev/null http://127.0.0.1:3000/ || true',
-        'sleep 2',
-        'curl -s --max-time 20 -o /dev/null http://127.0.0.1:3000/ || true',
-      ].join('; '),
-      { timeoutMs: 60_000 }
+    const sandbox = await Sandbox.connect(sandboxId);
+    await sandbox.setTimeout(SANDBOX_TIMEOUT);
+    try {
+      await runSandboxCommand(
+        sandbox,
+        [
+          `touch ${SANDBOX_PROJECT_ROOT}/app/page.tsx 2>/dev/null || true`,
+          `touch ${SANDBOX_PROJECT_ROOT}/src/app/page.tsx 2>/dev/null || true`,
+          'curl -s --max-time 20 -o /dev/null http://127.0.0.1:3000/ || true',
+          'sleep 2',
+          'curl -s --max-time 20 -o /dev/null http://127.0.0.1:3000/ || true',
+        ].join('; '),
+        { timeoutMs: 60_000 }
+      );
+    } catch {
+      // Preview may still hot-reload; do not fail the run.
+    }
+  } catch (e) {
+    console.warn(
+      '[sandbox] refreshSandboxDevServer: connect or nudge failed (ignored)',
+      e
     );
-  } catch {
-    // Preview may still hot-reload; do not fail the run.
   }
 }
 
