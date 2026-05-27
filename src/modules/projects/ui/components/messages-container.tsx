@@ -1,7 +1,7 @@
 import { useTRPC } from '@/trpc/client';
 import MessageCard from './message-card';
 import { MessageForm } from './message-form';
-import { useEffect, useRef, useState } from 'react';
+import { type Dispatch, type SetStateAction, useEffect, useRef, useState } from 'react';
 import { Fragment } from '@/generated/prisma/client';
 import { MessageLoading } from './message-loading';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -12,7 +12,7 @@ import { QueueBanner } from './queue-banner';
 
 interface Props {
   projectId: string;
-  setActiveFragment: (fragment: Fragment | null) => void;
+  setActiveFragment: Dispatch<SetStateAction<Fragment | null>>;
   onPreviewSyncingChange?: (syncing: boolean) => void;
 }
 
