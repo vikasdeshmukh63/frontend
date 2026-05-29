@@ -2,6 +2,8 @@ import {
   normalizeSandboxRelativePath,
   writeSandboxProjectFiles,
 } from '@/inngest/project-sandbox';
+import { SANDBOX_SAFE_COPY_TS } from '@/inngest/sandbox-safe-copy';
+import { sanitizeFileMap } from '@/inngest/source-sanitize';
 
 /** Matches create-next-app + shadcn template — required for Next.js 15 App Router. */
 export const DEFAULT_APP_LAYOUT = `import type { Metadata } from "next";
@@ -30,6 +32,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
+      <head>
+        <meta httpEquiv="Permissions-Policy" content="clipboard-write=(self)" />
+      </head>
       <body
         className={\`\${geistSans.variable} \${geistMono.variable} min-h-screen bg-background text-foreground antialiased\`}
       >
@@ -43,6 +48,7 @@ export default function RootLayout({
 const PROTECTED_EXACT = new Set([
   'app/layout.tsx',
   'src/app/layout.tsx',
+  'lib/safe-copy.ts',
   'app/globals.css',
   'src/app/globals.css',
   'package.json',
@@ -116,6 +122,7 @@ export function stripProtectedPathsFromFileMap(
 export function getSandboxBootstrapFiles(): Record<string, string> {
   return {
     'app/layout.tsx': DEFAULT_APP_LAYOUT,
+    'lib/safe-copy.ts': SANDBOX_SAFE_COPY_TS,
   };
 }
 
@@ -151,7 +158,7 @@ export function mergeBootstrapIntoFileMap(
   files: Record<string, string>
 ): Record<string, string> {
   return {
-    ...stripProtectedPathsFromFileMap(files),
+    ...sanitizeFileMap(stripProtectedPathsFromFileMap(files)),
     ...getSandboxBootstrapFiles(),
   };
 }

@@ -65,6 +65,7 @@ export default function ProfileView() {
 
   const credits = usage?.remainingPoints ?? 0;
   const estimatedCost = usage?.generationCost ?? 2;
+  const usingOwnApiKey = usage?.usingOwnApiKey ?? false;
   const nextResetMs = usage?.msBeforeNext ?? 0;
 
   return (
@@ -143,7 +144,9 @@ export default function ProfileView() {
             </p>
             <p>
               Estimated cost per generation:{' '}
-              <span className="font-semibold">{estimatedCost}+</span>
+              <span className="font-semibold">
+                {usingOwnApiKey ? '0 (using your API key)' : `${estimatedCost}+`}
+              </span>
             </p>
             <p className="text-muted-foreground">
               {nextResetMs > 0

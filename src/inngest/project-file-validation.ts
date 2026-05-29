@@ -5,6 +5,10 @@ import {
   isValidRootLayoutContent,
   pageHasIllegalDocumentShell,
 } from '@/inngest/sandbox-bootstrap';
+import {
+  prepareSandboxSourceForWrite,
+  validateSourceSyntax,
+} from '@/inngest/source-sanitize';
 
 /** Max UTF-8 bytes per writeProjectFile / createOrUpdateFiles payload (keeps tool JSON under model limits). */
 export const MAX_PROJECT_FILE_WRITE_BYTES = 48_000;
@@ -160,6 +164,8 @@ export function validateProjectFileWrite(
   const rel = path.trim().replace(/\\/g, '/');
   const lower = rel.toLowerCase();
   const ext = lower.includes('.') ? lower.slice(lower.lastIndexOf('.')) : '';
+  /** Validate the repaired form that will actually be written to disk. */
+  const prepared = prepareSandboxSourceForWrite(rel, content);
 
   if (rel.startsWith('public/refs/') || rel.startsWith('refs/')) {
     return {
@@ -182,7 +188,7 @@ export function validateProjectFileWrite(
     };
   }
 
-  if (isRootLayoutPath(rel) && !isValidRootLayoutContent(content)) {
+  if (isRootLayoutPath(rel) && !isValidRootLayoutContent(prepared)) {
     return {
       ok: false,
       error: `Root layout must include <html> and <body> tags. Do not create or edit app/layout.tsx — the template already provides it.`,
@@ -191,7 +197,7 @@ export function validateProjectFileWrite(
 
   if (
     (lower.endsWith('/page.tsx') || lower === 'app/page.tsx' || lower === 'src/app/page.tsx') &&
-    pageHasIllegalDocumentShell(content)
+    pageHasIllegalDocumentShell(prepared)
   ) {
     return {
       ok: false,
@@ -206,7 +212,7 @@ export function validateProjectFileWrite(
     };
   }
 
-  const bytes = byteLength(content);
+  const bytes = byteLength(prepared);
   if (bytes > MAX_PROJECT_FILE_WRITE_BYTES) {
     return {
       ok: false,
@@ -214,7 +220,7 @@ export function validateProjectFileWrite(
     };
   }
 
-  if (looksLikeEmbeddedImage(content)) {
+  if (looksLikeEmbeddedImage(prepared)) {
     return {
       ok: false,
       error: `File "${rel}" looks like base64 image data, not source code. Use paths like "/mock/listing-1.jpg" in mock data, or colored div placeholders — do not embed images in TS/TSX.`,
@@ -222,11 +228,26 @@ export function validateProjectFileWrite(
   }
 
   if (rel.endsWith('.tsx') || rel.endsWith('.jsx')) {
-    const selectCheck = validateShadcnSelectUsage(content);
+    const selectCheck = validateShadcnSelectUsage(prepared);
     if (!selectCheck.ok) return selectCheck;
 
-    const menuCheck = validateShadcnDropdownMenuUsage(content);
+    const menuCheck = validateShadcnDropdownMenuUsage(prepared);
     if (!menuCheck.ok) return menuCheck;
+  }
+
+  if (
+    rel.endsWith('.ts') ||
+    rel.endsWith('.tsx') ||
+    rel.endsWith('.js') ||
+    rel.endsWith('.jsx')
+  ) {
+    const syntax = validateSourceSyntax(rel, prepared);
+    if (!syntax.ok) {
+      return {
+        ok: false,
+        error: `File "${rel}" has invalid syntax: ${syntax.errors.join(' ')}. Ensure the file is complete valid TSX — no markdown fences, no extra quote after the closing "}", and all strings properly closed.`,
+      };
+    }
   }
 
   return { ok: true };

@@ -3,6 +3,7 @@ import 'server-only';
 import { inngest } from '@/inngest/client';
 import { createGenerationStatusMessage } from '@/inngest/generation-status';
 import type { ReferenceImageInput } from '@/inngest/reference-images';
+import { snapshotUserAiSettings } from '@/lib/ai-model-factory';
 import { defaultGenerationProgress } from '@/lib/generation-progress';
 import { releaseStaleGenerationLocks } from '@/lib/generation-lock';
 
@@ -32,6 +33,8 @@ export async function dispatchCodeAgentRun(params: {
     defaultGenerationProgress('Starting your build…')
   );
 
+  const aiSettings = await snapshotUserAiSettings(params.userId);
+
   await inngest.send({
     name: 'code-agent/run',
     data: {
@@ -41,6 +44,7 @@ export async function dispatchCodeAgentRun(params: {
       newSession: params.newSession === true,
       referenceImages: params.referenceImages ?? [],
       generationStatusMessageId: statusMessage.id,
+      aiSettings,
     },
   });
 }

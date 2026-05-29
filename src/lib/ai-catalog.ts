@@ -10,6 +10,12 @@ export function isAiProviderId(v: string): v is AiProviderId {
   return (AI_PROVIDER_IDS as readonly string[]).includes(v);
 }
 
+/** Normalize Prisma enum / unknown values to a known provider id. */
+export function parseAiProviderId(value: unknown): AiProviderId {
+  const raw = typeof value === 'string' ? value.trim() : String(value ?? '').trim();
+  return isAiProviderId(raw) ? raw : DEFAULT_AI_PROVIDER;
+}
+
 export type AiModelOption = {
   apiModel: string;
   label: string;

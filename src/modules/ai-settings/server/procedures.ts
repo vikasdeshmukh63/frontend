@@ -9,6 +9,7 @@ import {
   DEFAULT_AI_PROVIDER,
   getModelOption,
   isValidModelForProvider,
+  parseAiProviderId,
   type AiProviderId,
 } from '@/lib/ai-catalog';
 import { createTRPCRouter, protectedProcedure } from '@/trpc/init';
@@ -21,7 +22,9 @@ export const aiSettingsRouter = createTRPCRouter({
       where: { userId: ctx.auth.userId },
     });
 
-    const provider = (row?.provider ?? DEFAULT_AI_PROVIDER) as AiProviderId;
+    const provider = row
+      ? parseAiProviderId(row.provider)
+      : DEFAULT_AI_PROVIDER;
     const model = coerceModelForProvider(provider, row?.model ?? '');
 
     const opt = getModelOption(provider, model);

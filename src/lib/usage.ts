@@ -3,6 +3,10 @@ import {
   getCreditBalance,
   InsufficientCreditsError,
 } from '@/lib/credit-service';
+import {
+  getUserAiRuntimeConfig,
+  isUsingOwnProviderApiKey,
+} from '@/lib/ai-model-factory';
 import { MIN_DYNAMIC_GENERATION_CREDITS } from '@/lib/credit-pricing';
 
 export { MIN_DYNAMIC_GENERATION_CREDITS as GENERATION_COST };
@@ -27,12 +31,15 @@ export async function getUsageStatus() {
   const userId = session?.user?.id;
   if (!userId) throw new Error('User not authenticated');
 
+  const aiConfig = await getUserAiRuntimeConfig(userId);
+  const usingOwnApiKey = isUsingOwnProviderApiKey(aiConfig);
   const balance = await getCreditBalance(userId);
 
   return {
     remainingPoints: balance,
     msBeforeNext: 0,
-    generationCost: MIN_DYNAMIC_GENERATION_CREDITS,
+    generationCost: usingOwnApiKey ? 0 : MIN_DYNAMIC_GENERATION_CREDITS,
+    usingOwnApiKey,
   };
 }
 

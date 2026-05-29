@@ -19,7 +19,8 @@ import {
 import { prisma } from '@/lib/db';
 import {
   createAgentKitModel,
-  getUserAiRuntimeConfig,
+  isUsingOwnProviderApiKey,
+  resolveUserAiRuntimeConfig,
 } from '@/lib/ai-model-factory';
 import {
   enforceLocalInputRateLimit,
@@ -51,6 +52,10 @@ import {
   ensureUseClientDirective,
   validateProjectFileWrite,
 } from '@/inngest/project-file-validation';
+import {
+  prepareSandboxSourceForWrite,
+  repairAllSandboxSourceFiles,
+} from '@/inngest/source-sanitize';
 import { mergeBootstrapIntoFileMap } from '@/inngest/sandbox-bootstrap';
 import {
   formatReferenceImagesPromptSection,
@@ -232,9 +237,10 @@ async function writePathsToSandbox(
     const updatedFiles = { ...baseState };
     const normalized = files.map((file) => {
       const path = normalizeSandboxRelativePath(file.path);
+      const prepared = prepareSandboxSourceForWrite(path, file.content);
       return {
         path,
-        content: ensureUseClientDirective(path, file.content),
+        content: ensureUseClientDirective(path, prepared),
       };
     });
 
@@ -376,8 +382,10 @@ export const codeAgentFunction = inngest.createFunction(
         ? `inngest_gen_charge:${event.id}`
         : `inngest_gen_charge_fallback:${event.data.projectId}:${Date.now()}`;
 
-    const aiConfig = await step.run('load-ai-settings', async () => {
-      return getUserAiRuntimeConfig(userId);
+    const aiConfig = await resolveUserAiRuntimeConfig({
+      userId,
+      projectId,
+      snapshot: event.data.aiSettings,
     });
 
     const primaryModel = createAgentKitModel(aiConfig);
@@ -890,6 +898,13 @@ export const codeAgentFunction = inngest.createFunction(
         'reserve-generation-credits',
         async () => {
           if (!userId) return { ok: true as const, chargedCredits: 0 };
+          if (isUsingOwnProviderApiKey(aiConfig)) {
+            return {
+              ok: true as const,
+              chargedCredits: 0,
+              skippedBecauseOwnApiKey: true as const,
+            };
+          }
 
           const pricing = estimateGenerationCredits({
             provider: aiConfig.provider,
@@ -1337,6 +1352,11 @@ export const codeAgentFunction = inngest.createFunction(
             generationStatusMessageId,
             'Building preview…'
           );
+        });
+
+        await step.run('repair-sandbox-sources', async () => {
+          const { repaired } = await repairAllSandboxSourceFiles(sandboxId);
+          return { repaired };
         });
 
         const pageEnsure = await step.run('ensure-app-page', async () => {

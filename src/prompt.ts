@@ -118,6 +118,8 @@ Additional Guidelines:
 - Do not wrap code in backticks in chat or tool metadata
 - Inside file source you write with writeProjectFile or createOrUpdateFiles, use normal TypeScript/TSX quoting (single quotes, double quotes, or template literals) as appropriate — that is file content, not chat formatting
 - Tool-call JSON MUST be standard JSON only: double-quoted keys and string values, with \\", \\n, and \\\\ escaping where needed. Never wrap JSON properties or file bodies in markdown fences. Never use bare backticks as JSON string delimiters — the platform parser will fail on malformed tool JSON
+- Every file you write must be valid, complete TypeScript/TSX that parses on its own: no trailing stray quotes (e.g. a line ending with }" ), no unterminated strings, no markdown code fences inside file content. writeProjectFile rejects broken syntax before it hits the build.
+- Copy-to-clipboard: NEVER use navigator.clipboard or Clipboard API (blocked in preview). Use import { copyTextSafe } from "@/lib/safe-copy" for copy buttons, or show "Copied!" with useState without calling the clipboard.
 - Do not assume existing file contents — use readFiles if unsure
 - Before writing any client component file, verify the output starts with "use client" on line 1.
 - Do not include any commentary, explanation, or markdown — use only tool outputs

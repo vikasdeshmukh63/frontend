@@ -116,6 +116,7 @@ export function ChatAiSettingsButton() {
       onSuccess: () => {
         toast.success('AI preferences saved');
         queryClient.invalidateQueries(trpc.aiSettings.get.queryOptions());
+        queryClient.invalidateQueries(trpc.usage.status.queryOptions());
         setOpen(false);
       },
       onError: (e) => toast.error(e.message || 'Could not save preferences'),
@@ -290,8 +291,10 @@ export function ChatAiSettingsButton() {
             <CollapsibleContent className="pt-3">
               <div className="space-y-2">
                 <p className="text-muted-foreground text-xs">
-                  Leave empty to use the app&apos;s default credentials. Your key
-                  is stored for your account only.
+                  Leave empty to use the app&apos;s default credentials. If you save
+                  your own key for this provider, your generations use that key and
+                  your app credits are not consumed. Your key is stored for your
+                  account only.
                 </p>
                 <Label htmlFor="ai-api-key" className="text-xs">
                   {AI_PROVIDER_LABELS[draftProvider].short} API key

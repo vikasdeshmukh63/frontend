@@ -7,6 +7,8 @@ import {
   ensureSandboxBootstrapFiles,
   stripProtectedPathsFromFileMap,
 } from '@/inngest/sandbox-bootstrap';
+import { prepareSandboxSourceForWrite } from '@/inngest/source-sanitize';
+import { ensureUseClientDirective } from '@/inngest/project-file-validation';
 
 /** E2B template for the Next.js dev sandbox (unchanged from original flow). */
 const E2B_TEMPLATE_ID = 'vikasdeshmukh63/vibe-nextjs-test1';
@@ -61,7 +63,8 @@ export async function writeSandboxBinaryFile(
 
 export async function writeSandboxProjectFiles(
   sandboxId: string,
-  files: Array<{ path: string; content: string }>
+  files: Array<{ path: string; content: string }>,
+  options?: { skipPrepare?: boolean }
 ): Promise<void> {
   if (files.length === 0) return;
 
@@ -69,10 +72,15 @@ export async function writeSandboxProjectFiles(
   await sandbox.setTimeout(SANDBOX_TIMEOUT);
 
   for (const file of files) {
-    await sandbox.files.write(
-      toSandboxAbsolutePath(file.path),
-      file.content
-    );
+    const rel = normalizeSandboxRelativePath(file.path);
+    const content = options?.skipPrepare
+      ? file.content
+      : ensureUseClientDirective(
+          rel,
+          prepareSandboxSourceForWrite(rel, file.content)
+        );
+
+    await sandbox.files.write(toSandboxAbsolutePath(rel), content);
   }
 }
 

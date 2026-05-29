@@ -6,14 +6,16 @@ interface Props {
   points: number;
   msBeforeNext: number;
   generationCost?: number;
+  usingOwnApiKey?: boolean;
 }
 
 export const Usage = ({
   points,
   msBeforeNext,
   generationCost = 2,
+  usingOwnApiKey = false,
 }: Props) => {
-  const lowBalance = points < generationCost * 2;
+  const lowBalance = !usingOwnApiKey && points < generationCost * 2;
 
   return (
     <div className="bg-background rounded-t-xl border border-b-0 p-2.5">
@@ -23,6 +25,10 @@ export const Usage = ({
           {msBeforeNext > 0 ? (
             <p className="text-muted-foreground text-xs">
               Rate-limit window active (legacy field).
+            </p>
+          ) : usingOwnApiKey ? (
+            <p className="text-muted-foreground text-xs">
+              Using your own API key, so app credits are not consumed.
             </p>
           ) : (
             <p className="text-muted-foreground text-xs">

@@ -65,7 +65,8 @@ const ProjectView = ({ projectId }: Props) => {
   const { data: usage } = useQuery(trpc.usage.status.queryOptions());
   const genCost = usage?.generationCost ?? 2;
   const balance = usage?.remainingPoints ?? 0;
-  const needsCredits = balance < genCost * 2;
+  const usingOwnApiKey = usage?.usingOwnApiKey ?? false;
+  const needsCredits = !usingOwnApiKey && balance < genCost * 2;
 
   const [activeFragment, setActiveFragment] = useState<Fragment | null>(null);
   const [previewSyncing, setPreviewSyncing] = useState(false);

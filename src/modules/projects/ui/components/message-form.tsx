@@ -133,6 +133,7 @@ export const MessageForm = ({
           points={usage.remainingPoints}
           msBeforeNext={usage.msBeforeNext}
           generationCost={usage.generationCost}
+          usingOwnApiKey={usage.usingOwnApiKey}
         />
       )}
       <form
