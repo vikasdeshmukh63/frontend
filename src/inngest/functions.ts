@@ -39,6 +39,7 @@ import { agentStateHasBuiltAppPage } from '@/inngest/generation-guard';
 import {
   loadInitialAgentFilesFromLatestFragment,
   normalizeSandboxRelativePath,
+  ensureSandboxDevServerRunning,
   refreshSandboxDevServer,
   waitForSandboxPreviewReady,
   resolveOrCreateSandboxId,
@@ -474,6 +475,7 @@ export const codeAgentFunction = inngest.createFunction(
           data: { e2bSandboxId: sandboxId },
         });
 
+        await ensureSandboxDevServerRunning(sandboxId);
         await syncSandboxFilesFromMap(sandboxId, initialFiles);
         const { context: graphContext } = await syncGraphifyArtifactsToSandbox(
           sandboxId,
@@ -1398,8 +1400,15 @@ export const codeAgentFunction = inngest.createFunction(
             });
 
             await refreshSandboxDevServer(sandboxId);
-            const { ready: previewReady, httpCode } =
+            let { ready: previewReady, httpCode } =
               await waitForSandboxPreviewReady(sandboxId);
+
+            if (!previewReady) {
+              await ensureSandboxDevServerRunning(sandboxId);
+              await refreshSandboxDevServer(sandboxId);
+              ({ ready: previewReady, httpCode } =
+                await waitForSandboxPreviewReady(sandboxId, 90_000));
+            }
 
             if (!previewReady) {
               console.warn(

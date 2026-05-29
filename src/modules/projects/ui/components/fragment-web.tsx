@@ -6,6 +6,8 @@ import { useEffect, useState } from 'react';
 
 interface Props {
   data: Fragment;
+  /** Live URL from projects.getOne (avoids stale E2B host after sandbox revive). */
+  liveSandboxUrl?: string | null;
   /** Bump to reload iframe after live code edits sync to the sandbox. */
   refreshKey?: number;
 }
@@ -17,12 +19,13 @@ function previewSrc(sandboxUrl: string, fragmentId: string, refreshKey: number):
   return `${sandboxUrl}${separator}v=${encodeURIComponent(fragmentId)}&r=${refreshKey}`;
 }
 
-export function FragmentWeb({ data, refreshKey = 0 }: Props) {
+export function FragmentWeb({ data, liveSandboxUrl, refreshKey = 0 }: Props) {
   const [fragmentKey, setFragmentKey] = useState(0);
   const [copied, setCopied] = useState(false);
   const [frameState, setFrameState] = useState<FrameState>('loading');
-  const iframeSrc = data.sandboxUrl
-    ? previewSrc(data.sandboxUrl, data.id, refreshKey)
+  const sandboxUrl = liveSandboxUrl || data.sandboxUrl;
+  const iframeSrc = sandboxUrl
+    ? previewSrc(sandboxUrl, data.id, refreshKey)
     : '';
 
   useEffect(() => {
@@ -38,14 +41,14 @@ export function FragmentWeb({ data, refreshKey = 0 }: Props) {
     }, 30000);
 
     return () => window.clearTimeout(timeout);
-  }, [fragmentKey, data.sandboxUrl]);
+  }, [fragmentKey, sandboxUrl]);
 
   const onRefresh = () => {
     setFragmentKey((prev) => prev + 1);
   };
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(data.sandboxUrl);
+    navigator.clipboard.writeText(sandboxUrl);
     setCopied(true);
     setTimeout(() => {
       setCopied(false);
@@ -66,19 +69,19 @@ export function FragmentWeb({ data, refreshKey = 0 }: Props) {
             variant="outline"
             onClick={handleCopy}
             className="flex-1 justify-start text-start font-normal"
-            disabled={!data.sandboxUrl || copied}
+            disabled={!sandboxUrl || copied}
           >
-            <span className="truncate">{data.sandboxUrl}</span>
+            <span className="truncate">{sandboxUrl}</span>
           </Button>
         </Hint>
         <Hint text="Open in new tab" side="bottom" align="start">
           <Button
             size="sm"
             variant="outline"
-            disabled={!data.sandboxUrl}
+            disabled={!sandboxUrl}
             onClick={() => {
-              if (!data.sandboxUrl) return;
-              window.open(data.sandboxUrl, '_blank');
+              if (!sandboxUrl) return;
+              window.open(sandboxUrl, '_blank');
             }}
           >
             <ExternalLinkIcon />
@@ -119,7 +122,7 @@ export function FragmentWeb({ data, refreshKey = 0 }: Props) {
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => data.sandboxUrl && window.open(data.sandboxUrl, '_blank')}
+                onClick={() => sandboxUrl && window.open(sandboxUrl, '_blank')}
               >
                 <ExternalLinkIcon /> Open sandbox logs
               </Button>

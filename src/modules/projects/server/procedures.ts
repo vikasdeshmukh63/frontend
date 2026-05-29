@@ -1,16 +1,9 @@
 import { inngest } from '@/inngest/client';
-import {
-  loadInitialAgentFilesFromLatestFragment,
-  refreshSandboxDevServer,
-  resolveOrCreateSandboxId,
-  syncSandboxFilesFromMap,
-} from '@/inngest/project-sandbox';
-import { ensureSandboxBootstrapFiles } from '@/inngest/sandbox-bootstrap';
 import { prisma } from '@/lib/db';
+import { reviveProjectSandbox } from '@/lib/revive-project-sandbox';
 import { toAppTrpcError } from '@/lib/prisma-errors';
 import { protectedProcedure, createTRPCRouter } from '@/trpc/init';
 import { TRPCError } from '@trpc/server';
-import { Sandbox } from '@e2b/code-interpreter';
 import { generateSlug } from 'random-word-slugs';
 import z from 'zod';
 
@@ -37,44 +30,20 @@ export const projectsRouter = createTRPCRouter({
       }
 
       try {
-        const previousSandboxId = existingProject.e2bSandboxId ?? null;
-        const nextSandboxId = await resolveOrCreateSandboxId(existingProject.id);
-        const sandboxWasRecreated = !previousSandboxId || previousSandboxId !== nextSandboxId;
-
-        const latestFiles = await loadInitialAgentFilesFromLatestFragment(
-          existingProject.id
-        );
-        if (Object.keys(latestFiles).length > 0) {
-          await syncSandboxFilesFromMap(nextSandboxId, latestFiles);
-        }
-
-        const sandbox = await Sandbox.connect(nextSandboxId);
-        await ensureSandboxBootstrapFiles(nextSandboxId);
-        await refreshSandboxDevServer(nextSandboxId);
-        const sandboxUrl = `https://${sandbox.getHost(3000)}`;
-
-        await prisma.$transaction([
-          prisma.project.update({
-            where: { id: existingProject.id },
-            data: { e2bSandboxId: nextSandboxId },
-          }),
-          prisma.fragment.updateMany({
-            where: {
-              message: {
-                projectId: existingProject.id,
-              },
-            },
-            data: { sandboxUrl },
-          }),
-        ]);
-
+        const revived = await reviveProjectSandbox(existingProject.id);
         return {
           ...existingProject,
-          e2bSandboxId: nextSandboxId,
+          e2bSandboxId: revived.sandboxId,
+          sandboxPreviewUrl: revived.sandboxPreviewUrl,
+          previewReady: revived.previewReady,
         };
       } catch (error) {
         console.error('Failed to revive project sandbox:', error);
-        return existingProject;
+        return {
+          ...existingProject,
+          sandboxPreviewUrl: null as string | null,
+          previewReady: false,
+        };
       }
     }),
   getMany: protectedProcedure.query(async ({ ctx }) => {

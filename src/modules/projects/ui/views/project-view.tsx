@@ -19,7 +19,7 @@ import { ProjectHeader } from '../components/project-header';
 import UserControl from '@/components/user-control';
 import { ErrorBoundary } from 'react-error-boundary';
 import { useTRPC } from '@/trpc/client';
-import { useMutation, useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ProjectNotificationsButton } from '../components/project-notifications-button';
 import { toast } from 'sonner';
 
@@ -62,6 +62,14 @@ function PreviewLoadingState({ label = 'Loading preview…' }: { label?: string 
 
 const ProjectView = ({ projectId }: Props) => {
   const trpc = useTRPC();
+  const queryClient = useQueryClient();
+  const { data: project } = useQuery(
+    trpc.projects.getOne.queryOptions({ id: projectId })
+  );
+  const liveSandboxUrl =
+    (project as { sandboxPreviewUrl?: string | null } | undefined)
+      ?.sandboxPreviewUrl ?? null;
+
   const { data: usage } = useQuery(trpc.usage.status.queryOptions());
   const genCost = usage?.generationCost ?? 2;
   const balance = usage?.remainingPoints ?? 0;
@@ -87,6 +95,13 @@ const ProjectView = ({ projectId }: Props) => {
     pendingSyncFilesRef.current = null;
   }, [activeFragment?.id]);
 
+  useEffect(() => {
+    if (!activeFragment) return;
+    void queryClient.invalidateQueries(
+      trpc.projects.getOne.queryOptions({ id: projectId })
+    );
+  }, [activeFragment?.id, projectId, queryClient, trpc.projects.getOne]);
+
   const explorerFiles = useMemo(
     () => (activeFragment?.files as FileCollection | undefined) ?? {},
     [activeFragment?.files, activeFragment?.id]
@@ -103,6 +118,9 @@ const ProjectView = ({ projectId }: Props) => {
                 files: data.files as Fragment['files'],
               }
             : null
+        );
+        void queryClient.invalidateQueries(
+          trpc.projects.getOne.queryOptions({ id: projectId })
         );
         setPreviewRefreshKey((k) => k + 1);
         setEditorEpoch((e) => e + 1);
@@ -123,6 +141,9 @@ const ProjectView = ({ projectId }: Props) => {
       onSuccess: (data) => {
         setActiveFragment((prev) =>
           prev ? { ...prev, sandboxUrl: data.sandboxUrl } : null
+        );
+        void queryClient.invalidateQueries(
+          trpc.projects.getOne.queryOptions({ id: projectId })
         );
         setPreviewRefreshKey((k) => k + 1);
       },
@@ -244,6 +265,7 @@ const ProjectView = ({ projectId }: Props) => {
               ) : activeFragment ? (
                 <FragmentWeb
                   data={activeFragment}
+                  liveSandboxUrl={liveSandboxUrl}
                   refreshKey={previewRefreshKey}
                 />
               ) : (

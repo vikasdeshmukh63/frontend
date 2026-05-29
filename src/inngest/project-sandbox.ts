@@ -181,23 +181,30 @@ export async function waitForSandboxPreviewReady(
       lastCode = codeMatch?.[1] ?? '000';
       const body = raw.replace(/__HTTP__\d{3}$/, '');
 
+      const textContent = body.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
       const hasAppShell =
         /<html[\s>]/i.test(body) &&
         (body.includes('__next') ||
           body.includes('<main') ||
           body.includes('id="root"') ||
           body.length > 400);
+      const hasRenderableContent =
+        body.includes('<main') ||
+        textContent.length > 80 ||
+        /next-error|data-next-error|Build Error|Failed to compile/i.test(body);
       const isBuildError =
         /Build Error|Application error|Module not found|Failed to compile/i.test(
           body
         );
 
-      if (
-        (lastCode === '200' || lastCode === '304') &&
-        hasAppShell &&
-        !isBuildError
-      ) {
-        return { ready: true, httpCode: lastCode };
+      if ((lastCode === '200' || lastCode === '304') && hasAppShell) {
+        // Surface compile/runtime errors in the iframe instead of an endless blank screen.
+        if (isBuildError) {
+          return { ready: true, httpCode: lastCode };
+        }
+        if (hasRenderableContent) {
+          return { ready: true, httpCode: lastCode };
+        }
       }
     } catch (e) {
       console.warn('[sandbox] waitForSandboxPreviewReady: probe failed', e);
@@ -233,6 +240,7 @@ export async function resolveOrCreateSandboxId(
 
   const sandbox = await Sandbox.create(E2B_TEMPLATE_ID);
   await sandbox.setTimeout(SANDBOX_TIMEOUT);
+  await ensureSandboxDevServerRunning(sandbox.sandboxId);
   return sandbox.sandboxId;
 }
 

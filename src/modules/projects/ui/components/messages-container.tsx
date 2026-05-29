@@ -111,7 +111,15 @@ const MessagesContainer = ({
 
     setActiveFragment((current) => {
       // Chat polls every few seconds; don't stomp in-progress code edits for the same fragment.
-      if (current?.id === fragment.id) return current;
+      if (current?.id === fragment.id) {
+        if (
+          current.sandboxUrl !== fragment.sandboxUrl ||
+          JSON.stringify(current.files) !== JSON.stringify(fragment.files)
+        ) {
+          return { ...current, sandboxUrl: fragment.sandboxUrl, files: fragment.files };
+        }
+        return current;
+      }
       return fragment;
     });
     const latestMsg = [...messages]
