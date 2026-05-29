@@ -103,7 +103,6 @@ export const authConfig = {
           token.sub = user.id;
           token.email = user.email;
           token.name = user.name;
-          token.picture = user.image;
         } else if (
           token.sub &&
           (token.emailVerified === undefined || trigger === 'update')
@@ -123,10 +122,11 @@ export const authConfig = {
           if (typeof session.name === 'string') {
             token.name = session.name;
           }
-          if (typeof session.image === 'string' || session.image === null) {
-            token.picture = session.image ?? null;
-          }
         }
+
+        // Profile images belong in the DB only — long URLs in the JWT blow past cookie/header limits (HTTP 431).
+        delete token.picture;
+
         return token;
       } catch (err) {
         console.error('[auth] jwt callback failed', err);
@@ -135,7 +135,19 @@ export const authConfig = {
     },
     async session({ session, token }) {
       try {
-        return decorateSessionUserFromJwt(session, token);
+        const decorated = decorateSessionUserFromJwt(session, token);
+        const userId = decorated.user?.id;
+        if (userId) {
+          const { prisma } = await import('@/lib/db');
+          const row = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { image: true },
+          });
+          if (decorated.user) {
+            decorated.user.image = row?.image ?? null;
+          }
+        }
+        return decorated;
       } catch (err) {
         console.error('[auth] session callback failed', err);
         throw err;

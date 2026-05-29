@@ -50,10 +50,7 @@ export default function ProfileView() {
           trpc.profile.get.queryKey(),
           updatedProfile
         );
-        await updateSession({
-          name: updatedProfile.name,
-          image: updatedProfile.image,
-        });
+        await updateSession({ name: updatedProfile.name });
         toast.success('Profile updated');
         await queryClient.invalidateQueries(trpc.profile.get.queryOptions());
         await queryClient.refetchQueries({
