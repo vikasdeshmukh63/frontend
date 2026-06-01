@@ -17,6 +17,8 @@ export type UserAiRuntimeConfig = {
   openaiApiKey?: string;
   anthropicApiKey?: string;
   geminiApiKey?: string;
+  /** When true, use the saved key for the active provider instead of the app env key. */
+  useOwnApiKey: boolean;
 };
 
 /** Serialized on `code-agent/run` so the worker uses settings from dispatch time. */
@@ -26,6 +28,7 @@ export type UserAiSettingsSnapshot = {
   openaiApiKey?: string | null;
   anthropicApiKey?: string | null;
   geminiApiKey?: string | null;
+  useOwnApiKey?: boolean;
 };
 
 function trimKey(value: string | null | undefined): string | undefined {
@@ -37,8 +40,11 @@ function hasNonEmptyKey(value: string | undefined): boolean {
   return Boolean(value?.trim());
 }
 
-export function isUsingOwnProviderApiKey(config: UserAiRuntimeConfig): boolean {
-  switch (config.provider) {
+function hasSavedKeyForProvider(
+  config: UserAiRuntimeConfig,
+  provider: AiProviderId = config.provider
+): boolean {
+  switch (provider) {
     case 'OPENAI':
       return hasNonEmptyKey(config.openaiApiKey);
     case 'ANTHROPIC':
@@ -48,10 +54,16 @@ export function isUsingOwnProviderApiKey(config: UserAiRuntimeConfig): boolean {
   }
 }
 
+/** True only when the user opted in and has a key for the active provider. */
+export function isUsingOwnProviderApiKey(config: UserAiRuntimeConfig): boolean {
+  return config.useOwnApiKey && hasSavedKeyForProvider(config);
+}
+
 function defaultRuntimeConfig(): UserAiRuntimeConfig {
   return {
     provider: DEFAULT_AI_PROVIDER,
     apiModel: DEFAULT_MODEL_BY_PROVIDER[DEFAULT_AI_PROVIDER],
+    useOwnApiKey: false,
   };
 }
 
@@ -61,6 +73,7 @@ function rowToRuntimeConfig(row: {
   openaiApiKey: string | null;
   anthropicApiKey: string | null;
   geminiApiKey: string | null;
+  useOwnApiKey: boolean;
 }): UserAiRuntimeConfig {
   const provider = parseAiProviderId(row.provider);
   const apiModel = coerceModelForProvider(provider, row.model);
@@ -71,6 +84,7 @@ function rowToRuntimeConfig(row: {
     openaiApiKey: trimKey(row.openaiApiKey),
     anthropicApiKey: trimKey(row.anthropicApiKey),
     geminiApiKey: trimKey(row.geminiApiKey),
+    useOwnApiKey: row.useOwnApiKey,
   };
 }
 
@@ -84,6 +98,7 @@ export function userAiRuntimeConfigFromSnapshot(
     openaiApiKey: trimKey(snapshot.openaiApiKey),
     anthropicApiKey: trimKey(snapshot.anthropicApiKey),
     geminiApiKey: trimKey(snapshot.geminiApiKey),
+    useOwnApiKey: snapshot.useOwnApiKey === true,
   };
 }
 
@@ -106,6 +121,7 @@ export async function snapshotUserAiSettings(
     openaiApiKey: config.openaiApiKey ?? null,
     anthropicApiKey: config.anthropicApiKey ?? null,
     geminiApiKey: config.geminiApiKey ?? null,
+    useOwnApiKey: config.useOwnApiKey,
   };
 }
 
@@ -163,12 +179,16 @@ function platformApiKeyForProvider(provider: AiProviderId): string | undefined {
   }
 }
 
-/** User key when set; otherwise this app's env key for the active provider only. */
+/** Respects `useOwnApiKey`: when off, always uses the app env key even if a user key is stored. */
 function resolveProviderApiKey(
   userKey: string | undefined,
-  provider: AiProviderId
+  provider: AiProviderId,
+  useOwnApiKey: boolean
 ): string | undefined {
-  return trimKey(userKey) ?? platformApiKeyForProvider(provider);
+  if (useOwnApiKey) {
+    return trimKey(userKey) ?? platformApiKeyForProvider(provider);
+  }
+  return platformApiKeyForProvider(provider);
 }
 
 /**
@@ -180,7 +200,11 @@ export function createAgentKitModel(config: UserAiRuntimeConfig): any {
     case 'OPENAI':
       return openai({
         model: config.apiModel,
-        apiKey: resolveProviderApiKey(config.openaiApiKey, 'OPENAI'),
+        apiKey: resolveProviderApiKey(
+          config.openaiApiKey,
+          'OPENAI',
+          config.useOwnApiKey
+        ),
         defaultParameters: {
           temperature: 0.1,
           /** Large tool payloads truncate without this → invalid tool JSON / parse errors. */
@@ -190,7 +214,11 @@ export function createAgentKitModel(config: UserAiRuntimeConfig): any {
     case 'ANTHROPIC':
       return anthropic({
         model: config.apiModel,
-        apiKey: resolveProviderApiKey(config.anthropicApiKey, 'ANTHROPIC'),
+        apiKey: resolveProviderApiKey(
+          config.anthropicApiKey,
+          'ANTHROPIC',
+          config.useOwnApiKey
+        ),
         defaultParameters: {
           max_tokens: 8192,
           temperature: 0.1,
@@ -199,7 +227,11 @@ export function createAgentKitModel(config: UserAiRuntimeConfig): any {
     case 'GOOGLE_GEMINI':
       return gemini({
         model: config.apiModel,
-        apiKey: resolveProviderApiKey(config.geminiApiKey, 'GOOGLE_GEMINI'),
+        apiKey: resolveProviderApiKey(
+          config.geminiApiKey,
+          'GOOGLE_GEMINI',
+          config.useOwnApiKey
+        ),
         defaultParameters: {
           generationConfig: {
             temperature: 0.1,

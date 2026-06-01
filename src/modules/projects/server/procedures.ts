@@ -29,21 +29,45 @@ export const projectsRouter = createTRPCRouter({
         });
       }
 
+      const latestFragment = await prisma.fragment.findFirst({
+        where: { message: { projectId: existingProject.id } },
+        orderBy: { message: { createdAt: 'desc' } },
+        select: { sandboxUrl: true },
+      });
+
+      return {
+        ...existingProject,
+        sandboxPreviewUrl: latestFragment?.sandboxUrl ?? null,
+      };
+    }),
+
+  warmPreview: protectedProcedure
+    .input(z.object({ id: z.string().min(1) }))
+    .mutation(async ({ input, ctx }) => {
+      const project = await prisma.project.findUnique({
+        where: { id: input.id, userId: ctx.auth.userId },
+      });
+      if (!project) {
+        throw new TRPCError({
+          code: 'NOT_FOUND',
+          message: 'Project not found',
+        });
+      }
+
       try {
-        const revived = await reviveProjectSandbox(existingProject.id);
+        const revived = await reviveProjectSandbox(project.id);
         return {
-          ...existingProject,
-          e2bSandboxId: revived.sandboxId,
           sandboxPreviewUrl: revived.sandboxPreviewUrl,
           previewReady: revived.previewReady,
+          sandboxId: revived.sandboxId,
         };
       } catch (error) {
-        console.error('Failed to revive project sandbox:', error);
-        return {
-          ...existingProject,
-          sandboxPreviewUrl: null as string | null,
-          previewReady: false,
-        };
+        console.error('[warmPreview] failed:', error);
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message:
+            'Could not start the preview sandbox. Try Refresh or regenerate.',
+        });
       }
     }),
   getMany: protectedProcedure.query(async ({ ctx }) => {

@@ -7,8 +7,8 @@ import {
   CREDITS_PER_DOLLAR,
   MIN_PURCHASE_DOLLARS,
   dollarsToCredits,
-  dollarsToMinorUnits,
 } from '@/lib/payment/packs';
+import { dollarsToRazorpayOrderAmount } from '@/lib/payment/razorpay-currency';
 import { getRazorpayInstance } from '@/lib/payment/razorpay-client';
 
 const bodySchema = z.object({
@@ -32,7 +32,8 @@ export async function POST(req: Request) {
     }
 
     const amountDollars = Number(parsed.data.amountDollars.toFixed(2));
-    const amountMinor = dollarsToMinorUnits(amountDollars);
+    const { amountMinor, currency, amountInr } =
+      dollarsToRazorpayOrderAmount(amountDollars);
     const credits = dollarsToCredits(amountDollars);
 
     if (credits <= 0) {
@@ -44,7 +45,7 @@ export async function POST(req: Request) {
 
     const rzOrder = await rzp.orders.create({
       amount: amountMinor,
-      currency: 'USD',
+      currency,
       receipt,
       notes: {
         userId: session.user.id,
@@ -59,7 +60,7 @@ export async function POST(req: Request) {
         userId: session.user.id,
         packId: `custom_${amountDollars}`,
         amountMinor,
-        currency: 'USD',
+        currency,
         credits,
       },
     });
@@ -73,10 +74,11 @@ export async function POST(req: Request) {
     return NextResponse.json({
       orderId: rzOrder.id,
       amount: amountMinor,
-      currency: 'USD',
+      currency,
       keyId,
       credits,
       amountDollars,
+      amountInr,
       creditsPerDollar: CREDITS_PER_DOLLAR,
     });
   } catch (e) {

@@ -20,6 +20,7 @@ import {
   MIN_PURCHASE_DOLLARS,
   dollarsToCredits,
 } from '@/lib/payment/packs';
+import { RAZORPAY_CHECKOUT_PAYMENT_OPTIONS } from '@/lib/payment/razorpay-checkout-options';
 
 declare global {
   interface Window {
@@ -89,6 +90,7 @@ const Page = () => {
         currency?: string;
         keyId?: string;
         credits?: number;
+        amountInr?: number;
       };
 
       if (!res.ok) {
@@ -119,6 +121,7 @@ const Page = () => {
         order_id: data.orderId,
         name: 'Ryzor',
         description: `${data.credits ?? credits} credits`,
+        ...RAZORPAY_CHECKOUT_PAYMENT_OPTIONS,
         async handler(response: RazorpaySuccessPayload) {
           try {
             await confirmPayment(response);
@@ -184,6 +187,10 @@ const Page = () => {
               <p className="text-muted-foreground text-sm">
                 You will receive{' '}
                 <span className="font-semibold text-foreground">{credits}</span> credits.
+              </p>
+              <p className="text-muted-foreground text-xs">
+                Checkout supports UPI, cards, netbanking, and wallets. Indian payments
+                are charged in INR.
               </p>
 
               {!minValid && (

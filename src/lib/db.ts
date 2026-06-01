@@ -1,4 +1,4 @@
-import { PrismaClient } from '../generated/prisma/client';
+import { Prisma, PrismaClient } from '../generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
 const globalForPrisma = global as unknown as {
@@ -18,10 +18,15 @@ function schemaDelegateOk(client: PrismaClient | undefined): boolean {
   const delegates = client as unknown as {
     user?: { findUnique: (...args: unknown[]) => Promise<unknown> };
     messageAttachment?: { findMany: (...args: unknown[]) => Promise<unknown> };
+    userAiSettings?: { findUnique: (...args: unknown[]) => Promise<unknown> };
   };
+  const hasUseOwnApiKeyField =
+    'useOwnApiKey' in Prisma.UserAiSettingsScalarFieldEnum;
   return (
     typeof delegates.user?.findUnique === 'function' &&
-    typeof delegates.messageAttachment?.findMany === 'function'
+    typeof delegates.messageAttachment?.findMany === 'function' &&
+    typeof delegates.userAiSettings?.findUnique === 'function' &&
+    hasUseOwnApiKeyField
   );
 }
 

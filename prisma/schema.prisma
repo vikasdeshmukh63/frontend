@@ -201,6 +201,9 @@ model UserAiSettings {
   anthropicApiKey String?
   geminiApiKey    String?
 
+  /// When true and the active provider has a saved key, generations use that key (no app credits).
+  useOwnApiKey Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

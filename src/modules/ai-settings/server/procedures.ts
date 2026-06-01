@@ -37,6 +37,7 @@ export const aiSettingsRouter = createTRPCRouter({
       hasOpenaiKey: !!row?.openaiApiKey?.trim(),
       hasAnthropicKey: !!row?.anthropicApiKey?.trim(),
       hasGeminiKey: !!row?.geminiApiKey?.trim(),
+      useOwnApiKey: row?.useOwnApiKey ?? false,
       models: AI_MODELS_BY_PROVIDER[provider],
     };
   }),
@@ -49,6 +50,7 @@ export const aiSettingsRouter = createTRPCRouter({
         openaiApiKey: z.string().optional(),
         anthropicApiKey: z.string().optional(),
         geminiApiKey: z.string().optional(),
+        useOwnApiKey: z.boolean().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -69,6 +71,15 @@ export const aiSettingsRouter = createTRPCRouter({
       const anthropicApiKey = trimKey(input.anthropicApiKey);
       const geminiApiKey = trimKey(input.geminiApiKey);
 
+      const existing = await prisma.userAiSettings.findUnique({
+        where: { userId },
+        select: { useOwnApiKey: true },
+      });
+      const useOwnApiKey =
+        input.useOwnApiKey !== undefined
+          ? input.useOwnApiKey
+          : (existing?.useOwnApiKey ?? false);
+
       await prisma.userAiSettings.upsert({
         where: { userId },
         create: {
@@ -78,6 +89,7 @@ export const aiSettingsRouter = createTRPCRouter({
           openaiApiKey: openaiApiKey ?? null,
           anthropicApiKey: anthropicApiKey ?? null,
           geminiApiKey: geminiApiKey ?? null,
+          useOwnApiKey,
         },
         update: {
           provider,
@@ -85,9 +97,53 @@ export const aiSettingsRouter = createTRPCRouter({
           ...(openaiApiKey !== undefined && { openaiApiKey }),
           ...(anthropicApiKey !== undefined && { anthropicApiKey }),
           ...(geminiApiKey !== undefined && { geminiApiKey }),
+          ...(input.useOwnApiKey !== undefined && { useOwnApiKey }),
         },
       });
 
       return { ok: true as const };
+    }),
+
+  clearProviderKey: protectedProcedure
+    .input(z.object({ provider: providerSchema }))
+    .mutation(async ({ ctx, input }) => {
+      const userId = ctx.auth.userId;
+      const provider = input.provider as AiProviderId;
+      const keyField =
+        provider === 'OPENAI'
+          ? 'openaiApiKey'
+          : provider === 'ANTHROPIC'
+            ? 'anthropicApiKey'
+            : 'geminiApiKey';
+
+      const existing = await prisma.userAiSettings.findUnique({
+        where: { userId },
+      });
+
+      if (!existing) {
+        return {
+          ok: true as const,
+          hasOpenaiKey: false,
+          hasAnthropicKey: false,
+          hasGeminiKey: false,
+          useOwnApiKey: false,
+        };
+      }
+
+      const updated = await prisma.userAiSettings.update({
+        where: { userId },
+        data: {
+          [keyField]: null,
+          useOwnApiKey: false,
+        },
+      });
+
+      return {
+        ok: true as const,
+        hasOpenaiKey: !!updated.openaiApiKey?.trim(),
+        hasAnthropicKey: !!updated.anthropicApiKey?.trim(),
+        hasGeminiKey: !!updated.geminiApiKey?.trim(),
+        useOwnApiKey: updated.useOwnApiKey,
+      };
     }),
 });

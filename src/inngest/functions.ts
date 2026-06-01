@@ -1478,7 +1478,21 @@ export const codeAgentFunction = inngest.createFunction(
           });
 
           await syncSandboxFilesFromMap(sandboxId, mergedFiles);
+          await ensureSandboxBootstrapFiles(sandboxId);
+          await ensureAppPageForPreview({
+            sandboxId,
+            userPrompt: normalizedPrompt,
+          });
           await refreshSandboxDevServer(sandboxId);
+          await waitForSandboxPreviewReady(sandboxId, 120_000);
+
+          const sandbox = await getSandbox(sandboxId);
+          const finalSandboxUrl = `https://${sandbox.getHost(3000)}`;
+
+          await prisma.project.update({
+            where: { id: event.data.projectId },
+            data: { e2bSandboxId: sandboxId },
+          });
 
           const created = await prisma.message.create({
             data: {
@@ -1488,7 +1502,7 @@ export const codeAgentFunction = inngest.createFunction(
               type: 'RESULT',
               fragment: {
                 create: {
-                  sandboxUrl,
+                  sandboxUrl: finalSandboxUrl,
                   title: fragmentTitle,
                   files: mergedFiles,
                 },

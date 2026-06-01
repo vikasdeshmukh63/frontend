@@ -36,7 +36,7 @@ export async function reviveProjectSandbox(
   await refreshSandboxDevServer(sandboxId);
   const { ready: previewReady } = await waitForSandboxPreviewReady(
     sandboxId,
-    60_000
+    120_000
   );
 
   const sandbox = await Sandbox.connect(sandboxId);

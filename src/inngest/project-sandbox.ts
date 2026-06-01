@@ -106,12 +106,25 @@ export async function ensureSandboxDevServerRunning(
       [
         'set +e',
         `cd "${SANDBOX_PROJECT_ROOT}" || true`,
+        'pkill -f "next dev" 2>/dev/null || true',
         '(nohup npm run dev -- -p 3000 -H 0.0.0.0 > /tmp/next-dev.log 2>&1 &)',
-        'sleep 4',
+        'sleep 2',
         'exit 0',
       ].join('; '),
       { timeoutMs: 45_000 }
     );
+    const { ready, httpCode } = await waitForSandboxPreviewReady(sandboxId, 90_000);
+    if (!ready) {
+      const log = await runSandboxCommand(
+        sandbox,
+        'tail -n 30 /tmp/next-dev.log 2>/dev/null || echo "(no dev log)"',
+        { timeoutMs: 10_000 }
+      );
+      console.warn(
+        `[sandbox] dev server not ready after start (HTTP ${httpCode}):`,
+        log.stdout.slice(-1500)
+      );
+    }
   } catch (e) {
     console.warn(
       '[sandbox] ensureSandboxDevServerRunning: start command failed (ignored)',

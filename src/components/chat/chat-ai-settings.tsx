@@ -3,7 +3,7 @@
 import { useSession } from 'next-auth/react';
 import { useRouter } from 'next/navigation';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, KeyRound, Settings2 } from 'lucide-react';
+import { ChevronDown, KeyRound, Settings2, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
@@ -27,6 +27,7 @@ import {
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { Switch } from '@/components/ui/switch';
 import {
   AI_MODELS_BY_PROVIDER,
   AI_PROVIDER_IDS,
@@ -93,9 +94,8 @@ export function ChatAiSettingsButton() {
   const [draftModel, setDraftModel] = useState(
     DEFAULT_MODEL_BY_PROVIDER[DEFAULT_AI_PROVIDER]
   );
+  const [draftUseOwnApiKey, setDraftUseOwnApiKey] = useState(false);
   const [replacementKey, setReplacementKey] = useState('');
-  const [clearKeyForProvider, setClearKeyForProvider] =
-    useState<AiProviderId | null>(null);
   const [keysOpen, setKeysOpen] = useState(false);
 
   useEffect(() => {
@@ -103,23 +103,64 @@ export function ChatAiSettingsButton() {
     if (!data) {
       setDraftProvider(DEFAULT_AI_PROVIDER);
       setDraftModel(DEFAULT_MODEL_BY_PROVIDER[DEFAULT_AI_PROVIDER]);
+      setDraftUseOwnApiKey(false);
     } else {
       setDraftProvider(data.provider);
       setDraftModel(data.model);
+      setDraftUseOwnApiKey(data.useOwnApiKey);
     }
     setReplacementKey('');
-    setClearKeyForProvider(null);
   }, [open, data]);
+
+  const invalidateAiQueries = () => {
+    queryClient.invalidateQueries(trpc.aiSettings.get.queryOptions());
+    queryClient.invalidateQueries(trpc.usage.status.queryOptions());
+  };
 
   const update = useMutation(
     trpc.aiSettings.update.mutationOptions({
       onSuccess: () => {
         toast.success('AI preferences saved');
-        queryClient.invalidateQueries(trpc.aiSettings.get.queryOptions());
-        queryClient.invalidateQueries(trpc.usage.status.queryOptions());
+        invalidateAiQueries();
         setOpen(false);
       },
       onError: (e) => toast.error(e.message || 'Could not save preferences'),
+    })
+  );
+
+  const aiSettingsQueryKey = trpc.aiSettings.get.queryOptions().queryKey;
+
+  const applyKeyFlagsToCache = (flags: {
+    hasOpenaiKey: boolean;
+    hasAnthropicKey: boolean;
+    hasGeminiKey: boolean;
+    useOwnApiKey: boolean;
+  }) => {
+    queryClient.setQueryData(
+      aiSettingsQueryKey,
+      (old: typeof data | undefined) =>
+        old
+          ? {
+              ...old,
+              hasOpenaiKey: flags.hasOpenaiKey,
+              hasAnthropicKey: flags.hasAnthropicKey,
+              hasGeminiKey: flags.hasGeminiKey,
+              useOwnApiKey: flags.useOwnApiKey,
+            }
+          : old
+    );
+  };
+
+  const clearSavedKey = useMutation(
+    trpc.aiSettings.clearProviderKey.mutationOptions({
+      onSuccess: (result) => {
+        toast.success('Saved API key removed');
+        setReplacementKey('');
+        setDraftUseOwnApiKey(false);
+        applyKeyFlagsToCache(result);
+        queryClient.invalidateQueries(trpc.usage.status.queryOptions());
+      },
+      onError: (e) => toast.error(e.message || 'Could not remove saved key'),
     })
   );
 
@@ -127,7 +168,6 @@ export function ChatAiSettingsButton() {
     setDraftProvider(p);
     setDraftModel(DEFAULT_MODEL_BY_PROVIDER[p]);
     setReplacementKey('');
-    setClearKeyForProvider(null);
   };
 
   const buildKeyPatch = () => {
@@ -136,13 +176,6 @@ export function ChatAiSettingsButton() {
       anthropicApiKey?: string;
       geminiApiKey?: string;
     } = {};
-
-    if (clearKeyForProvider === draftProvider) {
-      if (draftProvider === 'OPENAI') patch.openaiApiKey = '';
-      if (draftProvider === 'ANTHROPIC') patch.anthropicApiKey = '';
-      if (draftProvider === 'GOOGLE_GEMINI') patch.geminiApiKey = '';
-      return patch;
-    }
 
     const next = replacementKey.trim();
     if (!next) return patch;
@@ -158,14 +191,27 @@ export function ChatAiSettingsButton() {
       router.push('/sign-in');
       return;
     }
+
+    const savingNewKey = replacementKey.trim().length > 0;
+    const useOwnApiKey = savingNewKey ? true : draftUseOwnApiKey;
+
+    if (useOwnApiKey && !savingNewKey && !hasKeyForProvider(data, draftProvider)) {
+      toast.error(
+        `Add a ${AI_PROVIDER_LABELS[draftProvider].short} API key or switch to the application key.`
+      );
+      return;
+    }
+
     update.mutate({
       provider: draftProvider,
       model: draftModel,
+      useOwnApiKey,
       ...buildKeyPatch(),
     });
   };
 
-  const customKeyActive = hasKeyForProvider(data, draftProvider);
+  const savedKeyForProvider = hasKeyForProvider(data, draftProvider);
+  const usingOwnKeyActive = draftUseOwnApiKey && savedKeyForProvider;
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -194,8 +240,8 @@ export function ChatAiSettingsButton() {
         <PopoverHeader className="border-b p-4 pb-3">
           <PopoverTitle className="text-base">AI model</PopoverTitle>
           <PopoverDescription>
-            Choose a provider and model. Optionally add your own API key for
-            that provider.
+            Choose a provider and model. Use your own API key or the
+            application&apos;s key (credits apply only for the application key).
           </PopoverDescription>
         </PopoverHeader>
 
@@ -263,6 +309,26 @@ export function ChatAiSettingsButton() {
             </ScrollArea>
           </div>
 
+          <div className="bg-muted/40 flex items-center justify-between gap-3 rounded-lg border p-3">
+            <div className="min-w-0 space-y-0.5">
+              <Label htmlFor="use-own-api-key" className="text-sm font-medium">
+                {draftUseOwnApiKey ? 'My API key' : 'Application API key'}
+              </Label>
+              <p className="text-muted-foreground text-xs leading-snug">
+                {draftUseOwnApiKey
+                  ? 'Generations use your saved key. App credits are not used.'
+                  : 'Generations use the app key. Credits are consumed per generation.'}
+              </p>
+            </div>
+            <Switch
+              id="use-own-api-key"
+              checked={draftUseOwnApiKey}
+              onCheckedChange={setDraftUseOwnApiKey}
+              disabled={!isSignedIn}
+              aria-label="Use my API key instead of application API key"
+            />
+          </div>
+
           <Collapsible open={keysOpen} onOpenChange={setKeysOpen}>
             <CollapsibleTrigger asChild>
               <Button
@@ -273,10 +339,10 @@ export function ChatAiSettingsButton() {
               >
                 <span className="flex items-center gap-2">
                   <KeyRound className="size-4" />
-                  API key (optional)
-                  {customKeyActive && (
+                  API key
+                  {savedKeyForProvider && (
                     <Badge variant="secondary" className="text-[10px]">
-                      Custom key saved
+                      {usingOwnKeyActive ? 'In use' : 'Saved (app key active)'}
                     </Badge>
                   )}
                 </span>
@@ -289,45 +355,58 @@ export function ChatAiSettingsButton() {
               </Button>
             </CollapsibleTrigger>
             <CollapsibleContent className="pt-3">
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <p className="text-muted-foreground text-xs">
-                  Leave empty to use the app&apos;s default credentials. If you save
-                  your own key for this provider, your generations use that key and
-                  your app credits are not consumed. Your key is stored for your
-                  account only.
+                  Save a provider key to use with &quot;My API key&quot; above.
+                  Removing the saved key switches you back to the application key.
                 </p>
-                <Label htmlFor="ai-api-key" className="text-xs">
-                  {AI_PROVIDER_LABELS[draftProvider].short} API key
-                </Label>
-                <Input
-                  id="ai-api-key"
-                  type="password"
-                  autoComplete="off"
-                  placeholder={
-                    customKeyActive
-                      ? 'Enter a new key to replace the saved one'
-                      : 'sk-… or your provider key'
-                  }
-                  value={replacementKey}
-                  onChange={(e) => {
-                    setReplacementKey(e.target.value);
-                    setClearKeyForProvider(null);
-                  }}
-                />
-                {customKeyActive && (
+                <div className="space-y-2">
+                  <Label htmlFor="ai-api-key" className="text-xs">
+                    {AI_PROVIDER_LABELS[draftProvider].short} API key
+                  </Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="ai-api-key"
+                      type="password"
+                      autoComplete="off"
+                      className="flex-1"
+                      placeholder={
+                        savedKeyForProvider
+                          ? 'Enter a new key to replace the saved one'
+                          : 'sk-… or your provider key'
+                      }
+                      value={replacementKey}
+                      onChange={(e) => setReplacementKey(e.target.value)}
+                    />
+                    {replacementKey.length > 0 && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="shrink-0"
+                        title="Clear input"
+                        onClick={() => setReplacementKey('')}
+                      >
+                        <X className="size-4" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+                {savedKeyForProvider ? (
                   <Button
                     type="button"
-                    variant="ghost"
+                    variant="outline"
                     size="sm"
-                    className="text-destructive hover:text-destructive h-8 px-2 text-xs"
+                    className="text-destructive hover:text-destructive w-full gap-2"
+                    disabled={clearSavedKey.isPending || !isSignedIn}
                     onClick={() => {
-                      setClearKeyForProvider(draftProvider);
-                      setReplacementKey('');
+                      clearSavedKey.mutate({ provider: draftProvider });
                     }}
                   >
-                    Remove saved key
+                    <Trash2 className="size-4" />
+                    Delete saved key
                   </Button>
-                )}
+                ) : null}
               </div>
             </CollapsibleContent>
           </Collapsible>
