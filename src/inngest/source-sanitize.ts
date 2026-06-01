@@ -74,9 +74,11 @@ export function getSourceParseDiagnostics(
   content: string
 ): string[] {
   const lower = fileName.toLowerCase();
-  const scriptKind = lower.endsWith('.tsx')
+  const isTsx = lower.endsWith('.tsx');
+  const isJsx = lower.endsWith('.jsx');
+  const scriptKind = isTsx
     ? ts.ScriptKind.TSX
-    : lower.endsWith('.jsx')
+    : isJsx
       ? ts.ScriptKind.JSX
       : lower.endsWith('.js')
         ? ts.ScriptKind.JS
@@ -90,10 +92,21 @@ export function getSourceParseDiagnostics(
     scriptKind
   );
 
-  return sourceFile.parseDiagnostics.map((d) => {
+  const { diagnostics = [] } = ts.transpileModule(content, {
+    fileName,
+    reportDiagnostics: true,
+    compilerOptions: {
+      target: ts.ScriptTarget.Latest,
+      module: ts.ModuleKind.ESNext,
+      ...(isTsx || isJsx ? { jsx: ts.JsxEmit.ReactJSX } : {}),
+    },
+  });
+
+  return diagnostics.map((d) => {
     const message = ts.flattenDiagnosticMessageText(d.messageText, '\n');
     const pos = d.start ?? 0;
-    const { line, character } = sourceFile.getLineAndCharacterOfPosition(pos);
+    const file = d.file ?? sourceFile;
+    const { line, character } = file.getLineAndCharacterOfPosition(pos);
     return `Line ${line + 1}:${character + 1}: ${message}`;
   });
 }
