@@ -17,6 +17,8 @@ import { useEffect, useRef } from 'react';
 import { isPersistedAttachmentId } from '@/lib/attachment-id';
 import {
   ChatImageAttachments,
+  getImageFilesFromClipboard,
+  type ChatImageAttachmentsHandle,
   type UploadedChatAttachment,
 } from './chat-image-attachments';
 
@@ -56,6 +58,7 @@ export const MessageForm = ({
     },
   });
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const attachmentsRef = useRef<ChatImageAttachmentsHandle>(null);
 
   useEffect(() => {
     const v = (prefillValue ?? '').trim();
@@ -145,6 +148,7 @@ export const MessageForm = ({
         )}
       >
         <ChatImageAttachments
+          ref={attachmentsRef}
           projectId={projectId}
           attachments={attachments}
           onAttachmentsChange={setAttachments}
@@ -178,6 +182,12 @@ export const MessageForm = ({
                     e.preventDefault();
                     form.handleSubmit(onSubmit)(e);
                   }
+                }}
+                onPaste={(e) => {
+                  const imageFiles = getImageFilesFromClipboard(e.clipboardData);
+                  if (imageFiles.length === 0) return;
+                  e.preventDefault();
+                  void attachmentsRef.current?.uploadFiles(imageFiles);
                 }}
               />
             );

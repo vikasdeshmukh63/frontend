@@ -50,7 +50,7 @@ export const AI_MODELS_BY_PROVIDER: Record<AiProviderId, AiModelOption[]> = {
     {
       apiModel: 'gpt-4.1',
       label: 'GPT-4.1',
-      description: 'Very capable for coding and multi-step tasks.',
+      description: 'Recommended default — strong coding and polished UI generation.',
     },
     {
       apiModel: 'gpt-4o',
@@ -72,7 +72,7 @@ export const AI_MODELS_BY_PROVIDER: Record<AiProviderId, AiModelOption[]> = {
     {
       apiModel: 'claude-sonnet-4-20250514',
       label: 'Claude Sonnet 4',
-      description: 'Excellent default for coding and agents.',
+      description: 'Recommended default — excellent for full app builds.',
     },
     {
       apiModel: 'claude-3-7-sonnet-latest',
@@ -89,7 +89,7 @@ export const AI_MODELS_BY_PROVIDER: Record<AiProviderId, AiModelOption[]> = {
     {
       apiModel: 'gemini-2.5-pro',
       label: 'Gemini 2.5 Pro',
-      description: 'Best reasoning and code quality in Gemini.',
+      description: 'Recommended default — best Gemini quality for complete UIs.',
     },
     {
       apiModel: 'gemini-2.5-flash',
@@ -109,7 +109,7 @@ export const DEFAULT_AI_PROVIDER: AiProviderId = 'OPENAI';
 export const DEFAULT_MODEL_BY_PROVIDER: Record<AiProviderId, string> = {
   OPENAI: 'gpt-4.1',
   ANTHROPIC: 'claude-sonnet-4-20250514',
-  GOOGLE_GEMINI: 'gemini-2.5-flash',
+  GOOGLE_GEMINI: 'gemini-2.5-pro',
 };
 
 export function isValidModelForProvider(

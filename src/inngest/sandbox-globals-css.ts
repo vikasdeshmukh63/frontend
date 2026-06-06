@@ -88,5 +88,8 @@ export const DEFAULT_APP_GLOBALS_CSS = `@import "tailwindcss";
   body {
     @apply bg-background text-foreground antialiased;
   }
+  h1, h2, h3 {
+    @apply tracking-tight;
+  }
 }
 `;

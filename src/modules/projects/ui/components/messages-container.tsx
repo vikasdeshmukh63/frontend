@@ -61,7 +61,7 @@ const MessagesContainer = ({
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages.length, showGenerationLoading]);
+  }, [messages.length, showGenerationLoading, statusContent]);
 
   const revertMutation = useMutation(
     trpc.messages.revertToFragment.mutationOptions({

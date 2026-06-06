@@ -52,7 +52,7 @@ export function FragmentWeb({
         setWarmError(
           result.previewReady
             ? null
-            : 'Preview is still compiling. Wait a moment and click Refresh again.'
+            : 'Preview is still compiling — wait a few seconds, then click Refresh again.'
         );
         onSandboxUrlChange?.(result.sandboxPreviewUrl);
         setFrameKey((k) => k + 1);
@@ -71,11 +71,25 @@ export function FragmentWeb({
     setFrameKey((k) => k + 1);
   }, [data.id, data.sandboxUrl, refreshKey]);
 
+  useEffect(() => {
+    if (frameState !== 'loading') return;
+    const timer = window.setTimeout(() => {
+      setFrameState((current) => (current === 'loading' ? 'ready' : current));
+    }, 20_000);
+    return () => window.clearTimeout(timer);
+  }, [frameKey, frameState]);
+
   const iframeSrc = sandboxUrl
     ? previewSrc(sandboxUrl, data.id, refreshKey, frameKey)
     : '';
 
   const onRefresh = () => {
+    setWarmError(null);
+    setFrameState('loading');
+    warmPreview.mutate({ id: projectId, forceRestart: false });
+  };
+
+  const onHardRefresh = () => {
     setWarmError(null);
     setFrameState('loading');
     warmPreview.mutate({ id: projectId, forceRestart: true });
@@ -95,7 +109,7 @@ export function FragmentWeb({
   return (
     <div className="flex h-full w-full flex-col">
       <div className="bg-sidebar flex items-center gap-x-2 border-b p-2">
-        <Hint text="Refresh preview sandbox" side="bottom">
+        <Hint text="Sync files and reload preview" side="bottom">
           <Button
             size="sm"
             variant="outline"
@@ -147,7 +161,6 @@ export function FragmentWeb({
             src={iframeSrc}
             onLoad={() => {
               setFrameState('ready');
-              setWarmError(null);
             }}
             onError={() => setFrameState('error')}
           />
@@ -166,14 +179,23 @@ export function FragmentWeb({
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/80 text-neutral-600 backdrop-blur-[1px]">
             <p className="text-sm">
               {warmPreview.isPending
-                ? 'Syncing preview sandbox…'
+                ? 'Syncing preview…'
                 : 'Loading preview…'}
             </p>
-            {!warmPreview.isPending && (
-              <p className="max-w-xs text-center text-xs">
-                First compile may take up to a minute inside the iframe.
-              </p>
-            )}
+          </div>
+        )}
+
+        {frameState === 'ready' && warmError && !warmPreview.isPending && (
+          <div className="absolute bottom-2 left-2 right-2 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+            <span>{warmError}</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="pointer-events-auto h-7 text-xs"
+              onClick={onHardRefresh}
+            >
+              Restart preview
+            </Button>
           </div>
         )}
 
@@ -192,6 +214,9 @@ export function FragmentWeb({
                 <Button size="sm" variant="default" onClick={onRefresh}>
                   <RefreshCcwIcon className="size-4" /> Refresh preview
                 </Button>
+                <Button size="sm" variant="outline" onClick={onHardRefresh}>
+                  Restart preview
+                </Button>
                 {sandboxUrl && (
                   <Button
                     size="sm"
@@ -208,12 +233,6 @@ export function FragmentWeb({
                 )}
               </div>
             </div>
-          </div>
-        )}
-
-        {warmError && frameState === 'ready' && !warmPreview.isPending && (
-          <div className="absolute bottom-2 left-2 right-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
-            {warmError}
           </div>
         )}
       </div>

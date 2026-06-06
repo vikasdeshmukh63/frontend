@@ -3,11 +3,13 @@ import 'server-only';
 import { Sandbox } from '@e2b/code-interpreter';
 
 import { ensureAppPageForPreview } from '@/inngest/auto-wire-page';
+import { repairMissingLocalImports } from '@/inngest/import-resolution';
 import { ensureSandboxBootstrapFiles } from '@/inngest/sandbox-bootstrap';
 import {
   loadInitialAgentFilesFromLatestFragment,
-  prepareSandboxPreview,
+  quickPrepareSandboxPreview,
   resolveOrCreateSandboxId,
+  restartSandboxDevServer,
   syncSandboxFilesFromMap,
 } from '@/inngest/project-sandbox';
 import { prisma } from '@/lib/db';
@@ -19,7 +21,7 @@ export type ReviveProjectSandboxResult = {
 };
 
 export type ReviveProjectSandboxOptions = {
-  /** Manual refresh: sync files then restart dev server if needed. */
+  /** Hard restart: kill dev server, clear .next, start fresh. */
   forceRestart?: boolean;
 };
 
@@ -39,15 +41,27 @@ export async function reviveProjectSandbox(
   }
 
   await ensureSandboxBootstrapFiles(sandboxId);
+  await repairMissingLocalImports(sandboxId);
   await ensureAppPageForPreview({
     sandboxId,
     userPrompt: 'App preview',
   });
 
-  const { ready: previewReady } = await prepareSandboxPreview(sandboxId, {
-    maxWaitMs: 45_000,
-    forceRestart: options?.forceRestart,
-  });
+  let previewReady = false;
+  let httpCode = '000';
+
+  if (options?.forceRestart) {
+    const result = await restartSandboxDevServer(sandboxId, 45_000);
+    previewReady = result.ready;
+    httpCode = result.httpCode;
+  } else {
+    let result = await quickPrepareSandboxPreview(sandboxId, 20_000);
+    if (!result.ready && result.httpCode === '000') {
+      result = await restartSandboxDevServer(sandboxId, 45_000);
+    }
+    previewReady = result.ready;
+    httpCode = result.httpCode;
+  }
 
   const sandbox = await Sandbox.connect(sandboxId);
   const sandboxPreviewUrl = `https://${sandbox.getHost(3000)}`;
@@ -72,5 +86,10 @@ export async function reviveProjectSandbox(
     console.warn('[reviveProjectSandbox] fragment update failed:', e);
   }
 
-  return { sandboxId, sandboxPreviewUrl, previewReady };
+  return {
+    sandboxId,
+    sandboxPreviewUrl,
+    previewReady:
+      previewReady || httpCode === '200' || httpCode === '304',
+  };
 }

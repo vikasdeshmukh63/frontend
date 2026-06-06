@@ -5,7 +5,10 @@ import { buildAttachmentProxyUrl } from '@/lib/attachment-url';
 import { cacheAttachmentPreview } from '@/lib/attachment-preview-cache';
 import { ImagePlusIcon, Loader2Icon, XIcon } from 'lucide-react';
 import {
+  forwardRef,
+  useCallback,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type Dispatch,
@@ -44,14 +47,64 @@ function revokePreviewUrl(url: string | undefined) {
   }
 }
 
-export function ChatImageAttachments({
-  projectId,
-  attachments,
-  onAttachmentsChange,
-  onUploadingChange,
-  disabled,
-  maxFiles = 4,
-}: Props) {
+function normalizePastedImageFile(file: File): File {
+  const ext = file.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+  const name =
+    file.name && !/^image\.(png|jpe?g|gif|webp)$/i.test(file.name)
+      ? file.name
+      : `pasted-${Date.now()}.${ext}`;
+  return file.name === name ? file : new File([file], name, { type: file.type });
+}
+
+/** One pasted image — browsers often duplicate the same file on items + files. */
+export function getImageFilesFromClipboard(
+  clipboardData: DataTransfer | null
+): File[] {
+  if (!clipboardData) return [];
+
+  const candidates: File[] = [];
+
+  for (const file of Array.from(clipboardData.files)) {
+    if (file.type.startsWith('image/')) candidates.push(file);
+  }
+
+  if (candidates.length === 0) {
+    for (const item of Array.from(clipboardData.items)) {
+      if (item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+      const file = item.getAsFile();
+      if (file) candidates.push(file);
+    }
+  }
+
+  const seen = new Set<string>();
+  for (const file of candidates) {
+    const key = `${file.type}:${file.size}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    return [normalizePastedImageFile(file)];
+  }
+
+  return [];
+}
+
+export type ChatImageAttachmentsHandle = {
+  uploadFiles: (files: File[]) => Promise<void>;
+};
+
+export const ChatImageAttachments = forwardRef<
+  ChatImageAttachmentsHandle,
+  Props
+>(function ChatImageAttachments(
+  {
+    projectId,
+    attachments,
+    onAttachmentsChange,
+    onUploadingChange,
+    disabled,
+    maxFiles = 4,
+  },
+  ref
+) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [localPreviews, setLocalPreviews] = useState<LocalPreview[]>([]);
@@ -62,80 +115,103 @@ export function ChatImageAttachments({
 
   const totalCount = attachments.length + localPreviews.length;
 
+  const uploadFiles = useCallback(
+    async (incoming: File[]) => {
+      if (!incoming.length || disabled || uploading) return;
+
+      const imageFiles = incoming.filter((f) => f.type.startsWith('image/'));
+      if (imageFiles.length === 0) {
+        toast.error('Only image files can be attached.');
+        return;
+      }
+
+      const remaining = maxFiles - totalCount;
+      if (remaining <= 0) {
+        toast.error(`You can attach up to ${maxFiles} images.`);
+        return;
+      }
+
+      const files = imageFiles.slice(0, remaining);
+      const newPreviews: LocalPreview[] = files.map((file) => ({
+        key: crypto.randomUUID(),
+        previewUrl: URL.createObjectURL(file),
+        fileName: file.name || 'image.jpg',
+      }));
+
+      setLocalPreviews((prev) => [...prev, ...newPreviews]);
+
+      const formData = new FormData();
+      for (const file of files) {
+        formData.append('files', file);
+      }
+
+      setUploading(true);
+      try {
+        const res = await fetch(`/api/projects/${projectId}/attachments`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        const data = (await res.json()) as {
+          attachments?: UploadedChatAttachment[];
+          error?: string;
+        };
+
+        if (!res.ok) {
+          throw new Error(data.error || 'Upload failed');
+        }
+
+        const uploaded = data.attachments ?? [];
+        if (uploaded.length !== newPreviews.length) {
+          throw new Error('Upload returned unexpected number of files');
+        }
+
+        onAttachmentsChange((prev) => [
+          ...prev,
+          ...uploaded.map((row, i) => {
+            const preview = newPreviews[i]?.previewUrl;
+            if (preview) cacheAttachmentPreview(row.id, preview);
+            return {
+              id: row.id,
+              publicUrl: buildAttachmentProxyUrl(projectId, row.id),
+              fileName: row.fileName,
+              mimeType: row.mimeType,
+              previewUrl: preview,
+            };
+          }),
+        ]);
+
+        setLocalPreviews((prev) =>
+          prev.filter((p) => !newPreviews.some((n) => n.key === p.key))
+        );
+      } catch (error) {
+        for (const p of newPreviews) revokePreviewUrl(p.previewUrl);
+        setLocalPreviews((prev) =>
+          prev.filter((p) => !newPreviews.some((n) => n.key === p.key))
+        );
+        toast.error(
+          error instanceof Error ? error.message : 'Failed to upload image'
+        );
+      } finally {
+        setUploading(false);
+        if (inputRef.current) inputRef.current.value = '';
+      }
+    },
+    [
+      disabled,
+      uploading,
+      totalCount,
+      maxFiles,
+      projectId,
+      onAttachmentsChange,
+    ]
+  );
+
+  useImperativeHandle(ref, () => ({ uploadFiles }), [uploadFiles]);
+
   const onPickFiles = async (fileList: FileList | null) => {
-    if (!fileList?.length || disabled || uploading) return;
-
-    const remaining = maxFiles - totalCount;
-    if (remaining <= 0) {
-      toast.error(`You can attach up to ${maxFiles} images.`);
-      return;
-    }
-
-    const files = Array.from(fileList).slice(0, remaining);
-    const newPreviews: LocalPreview[] = files.map((file) => ({
-      key: crypto.randomUUID(),
-      previewUrl: URL.createObjectURL(file),
-      fileName: file.name || 'image.jpg',
-    }));
-
-    setLocalPreviews((prev) => [...prev, ...newPreviews]);
-
-    const formData = new FormData();
-    for (const file of files) {
-      formData.append('files', file);
-    }
-
-    setUploading(true);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/attachments`, {
-        method: 'POST',
-        body: formData,
-      });
-
-      const data = (await res.json()) as {
-        attachments?: UploadedChatAttachment[];
-        error?: string;
-      };
-
-      if (!res.ok) {
-        throw new Error(data.error || 'Upload failed');
-      }
-
-      const uploaded = data.attachments ?? [];
-      if (uploaded.length !== newPreviews.length) {
-        throw new Error('Upload returned unexpected number of files');
-      }
-
-      onAttachmentsChange((prev) => [
-        ...prev,
-        ...uploaded.map((row, i) => {
-          const preview = newPreviews[i]?.previewUrl;
-          if (preview) cacheAttachmentPreview(row.id, preview);
-          return {
-            id: row.id,
-            publicUrl: buildAttachmentProxyUrl(projectId, row.id),
-            fileName: row.fileName,
-            mimeType: row.mimeType,
-            previewUrl: preview,
-          };
-        }),
-      ]);
-
-      setLocalPreviews((prev) =>
-        prev.filter((p) => !newPreviews.some((n) => n.key === p.key))
-      );
-    } catch (error) {
-      for (const p of newPreviews) revokePreviewUrl(p.previewUrl);
-      setLocalPreviews((prev) =>
-        prev.filter((p) => !newPreviews.some((n) => n.key === p.key))
-      );
-      toast.error(
-        error instanceof Error ? error.message : 'Failed to upload image'
-      );
-    } finally {
-      setUploading(false);
-      if (inputRef.current) inputRef.current.value = '';
-    }
+    if (!fileList?.length) return;
+    await uploadFiles(Array.from(fileList));
   };
 
   const removeAttachment = (id: string) => {
@@ -254,4 +330,5 @@ export function ChatImageAttachments({
       )}
     </div>
   );
-}
+});
+ChatImageAttachments.displayName = 'ChatImageAttachments';

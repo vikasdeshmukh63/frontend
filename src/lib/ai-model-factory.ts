@@ -180,6 +180,32 @@ function platformApiKeyForProvider(provider: AiProviderId): string | undefined {
 }
 
 /** Respects `useOwnApiKey`: when off, always uses the app env key even if a user key is stored. */
+export function resolveActiveProviderApiKey(
+  config: UserAiRuntimeConfig
+): string | undefined {
+  switch (config.provider) {
+    case 'OPENAI':
+      return resolveProviderApiKey(
+        config.openaiApiKey,
+        'OPENAI',
+        config.useOwnApiKey
+      );
+    case 'ANTHROPIC':
+      return resolveProviderApiKey(
+        config.anthropicApiKey,
+        'ANTHROPIC',
+        config.useOwnApiKey
+      );
+    case 'GOOGLE_GEMINI':
+      return resolveProviderApiKey(
+        config.geminiApiKey,
+        'GOOGLE_GEMINI',
+        config.useOwnApiKey
+      );
+  }
+}
+
+/** Respects `useOwnApiKey`: when off, always uses the app env key even if a user key is stored. */
 function resolveProviderApiKey(
   userKey: string | undefined,
   provider: AiProviderId,
@@ -206,9 +232,9 @@ export function createAgentKitModel(config: UserAiRuntimeConfig): any {
           config.useOwnApiKey
         ),
         defaultParameters: {
-          temperature: 0.1,
+          temperature: 0.15,
           /** Large tool payloads truncate without this → invalid tool JSON / parse errors. */
-          max_completion_tokens: 16384,
+          max_completion_tokens: 20_000,
         },
       });
     case 'ANTHROPIC':
@@ -220,8 +246,8 @@ export function createAgentKitModel(config: UserAiRuntimeConfig): any {
           config.useOwnApiKey
         ),
         defaultParameters: {
-          max_tokens: 8192,
-          temperature: 0.1,
+          max_tokens: 12_000,
+          temperature: 0.15,
         },
       });
     case 'GOOGLE_GEMINI':
@@ -234,8 +260,8 @@ export function createAgentKitModel(config: UserAiRuntimeConfig): any {
         ),
         defaultParameters: {
           generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 8192,
+            temperature: 0.15,
+            maxOutputTokens: 12_000,
           },
         },
       });

@@ -84,6 +84,55 @@ export async function writeSandboxProjectFiles(
   }
 }
 
+function sandboxShellScript(lines: string[]): string {
+  return lines.join('; ');
+}
+
+/** Stop Next dev server and free port 3000 (avoids EADDRINUSE on restart). */
+async function stopSandboxDevServer(sandbox: Sandbox): Promise<void> {
+  await runSandboxCommand(
+    sandbox,
+    sandboxShellScript([
+      `cd "${SANDBOX_PROJECT_ROOT}" || true`,
+      'pkill -9 -f "next dev" 2>/dev/null || true',
+      'pkill -9 -f "node.*next" 2>/dev/null || true',
+      'sleep 2',
+      'fuser -k 3000/tcp 2>/dev/null || true',
+      'sleep 1',
+      'exit 0',
+    ]),
+    { timeoutMs: 25_000 }
+  );
+}
+
+/** Clear corrupted .next cache (fixes EACCES trace errors after failed restarts). */
+async function resetSandboxNextCache(sandbox: Sandbox): Promise<void> {
+  await runSandboxCommand(
+    sandbox,
+    sandboxShellScript([
+      `cd "${SANDBOX_PROJECT_ROOT}" || true`,
+      'rm -rf .next 2>/dev/null || true',
+      'mkdir -p .next',
+      'chmod -R u+rwX .next 2>/dev/null || true',
+      'exit 0',
+    ]),
+    { timeoutMs: 30_000 }
+  );
+}
+
+async function startSandboxDevServer(sandbox: Sandbox): Promise<void> {
+  await runSandboxCommand(
+    sandbox,
+    sandboxShellScript([
+      `cd "${SANDBOX_PROJECT_ROOT}" || true`,
+      'nohup npm run dev -- -p 3000 -H 0.0.0.0 > /tmp/next-dev.log 2>&1 &',
+      'sleep 3',
+      'exit 0',
+    ]),
+    { timeoutMs: 20_000 }
+  );
+}
+
 /** Kill and restart Next dev server, then wait until the app responds with content. */
 export async function restartSandboxDevServer(
   sandboxId: string,
@@ -93,23 +142,11 @@ export async function restartSandboxDevServer(
   await sandbox.setTimeout(SANDBOX_TIMEOUT);
 
   try {
-    await runSandboxCommand(
-      sandbox,
-      `cd "${SANDBOX_PROJECT_ROOT}" && pkill -f "next dev" 2>/dev/null || true`,
-      { timeoutMs: 10_000 }
-    );
-  } catch {
-    /* pkill may exit non-zero when no process exists */
-  }
-
-  try {
-    await runSandboxCommand(
-      sandbox,
-      `(cd "${SANDBOX_PROJECT_ROOT}" && nohup npm run dev -- -p 3000 -H 0.0.0.0 > /tmp/next-dev.log 2>&1 &) && sleep 1 && exit 0`,
-      { timeoutMs: 15_000 }
-    );
+    await stopSandboxDevServer(sandbox);
+    await resetSandboxNextCache(sandbox);
+    await startSandboxDevServer(sandbox);
   } catch (e) {
-    console.warn('[sandbox] restartSandboxDevServer: start command failed', e);
+    console.warn('[sandbox] restartSandboxDevServer: restart failed', e);
   }
 
   const result = await waitForSandboxPreviewReady(sandboxId, maxWaitMs);
@@ -159,6 +196,17 @@ export async function prepareSandboxPreview(
   return first;
 }
 
+/** Lightweight preview prep for UI refresh — no full restart unless the port is dead. */
+export async function quickPrepareSandboxPreview(
+  sandboxId: string,
+  maxWaitMs = 20_000
+): Promise<{ ready: boolean; httpCode: string }> {
+  await refreshSandboxDevServer(sandboxId);
+  const first = await waitForSandboxPreviewReady(sandboxId, maxWaitMs);
+  if (first.ready || first.httpCode !== '000') return first;
+  return restartSandboxDevServer(sandboxId, Math.max(maxWaitMs, 45_000));
+}
+
 /** Start Next dev server if port 3000 is not responding (template process may have died). */
 export async function ensureSandboxDevServerRunning(
   sandboxId: string
@@ -172,23 +220,16 @@ export async function ensureSandboxDevServerRunning(
     { timeoutMs: 15_000 }
   );
   const code = probe.stdout.trim().slice(-3);
-  if (code === '200' || code === '304') return;
+  if (code === '200' || code === '304') {
+    return;
+  }
 
   /** Never throw: npm/curl may exit non-zero while the dev server still comes up (E2B CommandExitError). */
   try {
-    await runSandboxCommand(
-      sandbox,
-      [
-        'set +e',
-        `cd "${SANDBOX_PROJECT_ROOT}" || true`,
-        'pkill -f "next dev" 2>/dev/null || true',
-        '(nohup npm run dev -- -p 3000 -H 0.0.0.0 > /tmp/next-dev.log 2>&1 &)',
-        'sleep 2',
-        'exit 0',
-      ].join('; '),
-      { timeoutMs: 45_000 }
-    );
-    const { ready, httpCode } = await waitForSandboxPreviewReady(sandboxId, 90_000);
+    await stopSandboxDevServer(sandbox);
+    await resetSandboxNextCache(sandbox);
+    await startSandboxDevServer(sandbox);
+    const { ready, httpCode } = await waitForSandboxPreviewReady(sandboxId, 45_000);
     if (!ready) {
       const log = await runSandboxCommand(
         sandbox,
@@ -227,11 +268,9 @@ export async function refreshSandboxDevServer(sandboxId: string): Promise<void> 
         [
           `touch ${SANDBOX_PROJECT_ROOT}/app/page.tsx 2>/dev/null || true`,
           `touch ${SANDBOX_PROJECT_ROOT}/src/app/page.tsx 2>/dev/null || true`,
-          'curl -s --max-time 20 -o /dev/null http://127.0.0.1:3000/ || true',
-          'sleep 2',
-          'curl -s --max-time 20 -o /dev/null http://127.0.0.1:3000/ || true',
+          'curl -s --max-time 8 -o /dev/null http://127.0.0.1:3000/ || true',
         ].join('; '),
-        { timeoutMs: 60_000 }
+        { timeoutMs: 15_000 }
       );
     } catch {
       // Preview may still hot-reload; do not fail the run.
@@ -269,29 +308,27 @@ export async function waitForSandboxPreviewReady(
       lastCode = codeMatch?.[1] ?? '000';
       const body = raw.replace(/__HTTP__\d{3}$/, '');
 
-      const textContent = body.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-      const hasAppShell =
-        /<html[\s>]/i.test(body) &&
-        (body.includes('__next') ||
-          body.includes('<main') ||
-          body.includes('id="root"') ||
-          body.length > 400);
-      const hasRenderableContent =
-        body.includes('<main') ||
-        body.includes('__next') ||
-        textContent.length > 40 ||
-        /next-error|data-next-error|Build Error|Failed to compile/i.test(body);
       const isBuildError =
         /Build Error|Application error|Module not found|Failed to compile/i.test(
           body
         );
+      const hasNextBundle =
+        body.includes('/_next/') ||
+        body.includes('__next_f') ||
+        body.includes('__NEXT_DATA__') ||
+        body.includes('__next');
+      const hasHtmlShell = /<html[\s>]/i.test(body);
+      const hasMainContent =
+        body.includes('<main') ||
+        hasNextBundle ||
+        body.includes('next-error') ||
+        body.includes('data-next-error');
 
-      if ((lastCode === '200' || lastCode === '304') && hasAppShell) {
-        // Surface compile/runtime errors in the iframe instead of an endless blank screen.
+      if (lastCode === '200' || lastCode === '304') {
         if (isBuildError) {
           return { ready: true, httpCode: lastCode };
         }
-        if (hasRenderableContent) {
+        if (hasHtmlShell && hasMainContent) {
           return { ready: true, httpCode: lastCode };
         }
       }

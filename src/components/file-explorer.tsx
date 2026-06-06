@@ -116,6 +116,8 @@ interface FileExplorerProps {
   onSave?: (files: FileCollection) => void;
   isSaving?: boolean;
   isSyncingPreview?: boolean;
+  /** Stream live files during generation without resetting on every parent render. */
+  liveGeneration?: boolean;
 }
 
 /** Push to sandbox only after user pauses typing (reduces costly E2B syncs). */
@@ -128,6 +130,7 @@ export const FileExplorer = ({
   onSave,
   isSaving = false,
   isSyncingPreview = false,
+  liveGeneration = false,
 }: FileExplorerProps) => {
   const { resolvedTheme } = useTheme();
   const monacoTheme = resolvedTheme === 'dark' ? 'vs-dark' : 'light';
@@ -147,18 +150,31 @@ export const FileExplorer = ({
   onPreviewSyncRef.current = onPreviewSync;
   onSaveRef.current = onSave;
 
-  // Only reset local editor state when switching fragments — not on every parent re-render
-  // (preview sync / chat polling would otherwise revert in-progress edits).
+  // Reset editor when switching fragments; during live generation merge incoming files.
   useEffect(() => {
+    if (liveGeneration) {
+      setFiles(initialFiles);
+      const ordered =
+        Object.keys(initialFiles).length > 0
+          ? Object.keys(initialFiles)
+          : [];
+      if (ordered.length === 0) return;
+      setSelectedFile((current) => {
+        if (current && initialFiles[current]) return current;
+        return ordered[ordered.length - 1] ?? null;
+      });
+      return;
+    }
+
     setFiles(initialFiles);
     const fileKeys = Object.keys(initialFiles);
     setSelectedFile(fileKeys.length > 0 ? fileKeys[0] : null);
     skipPreviewSyncRef.current = true;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: reset only on fragment change
-  }, [fragmentId]);
+  }, [fragmentId, liveGeneration, initialFiles]);
 
   useEffect(() => {
-    if (!onPreviewSyncRef.current) return;
+    if (liveGeneration || !onPreviewSyncRef.current) return;
 
     if (skipPreviewSyncRef.current) {
       skipPreviewSyncRef.current = false;
@@ -232,6 +248,7 @@ export const FileExplorer = ({
     wordWrap: 'off' as const,
     lineNumbers: 'on' as const,
     renderLineHighlight: 'all' as const,
+    readOnly: liveGeneration,
     padding: { top: 8, bottom: 8 },
     fontFamily:
       "'SF Mono', 'Monaco', 'Inconsolata', 'Fira Mono', 'Droid Sans Mono', 'Source Code Pro', monospace",
@@ -248,7 +265,7 @@ export const FileExplorer = ({
       <ResizablePanel defaultSize={30} minSize={30} className="bg-sidebar">
         <div className="flex items-center justify-between border-b px-3 py-2">
           <span className="text-muted-foreground text-xs font-medium uppercase tracking-wide">
-            Files
+            {liveGeneration ? 'Live generation' : 'Files'}
           </span>
           <Hint text="Download all as ZIP" side="bottom">
             <Button

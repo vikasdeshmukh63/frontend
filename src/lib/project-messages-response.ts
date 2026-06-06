@@ -9,6 +9,7 @@ import {
   hasTerminalReplyAfterLastUser,
   isGenerationStatusMessage,
 } from '@/lib/generation-status';
+import { parseGenerationProgress, type GenerationProgress } from '@/lib/generation-progress';
 
 export type ProjectMessageRow = Message & {
   fragment: Fragment | null;
@@ -22,6 +23,8 @@ export type ProjectMessagesPayload = {
   isGenerating: boolean;
   /** Latest preview fragment for the demo panel (null while first build has no result). */
   latestFragment: Fragment | null;
+  /** Live code progress while generating (parsed from status message). */
+  generationProgress: GenerationProgress | null;
 };
 
 export function buildProjectMessagesPayload(
@@ -46,10 +49,14 @@ export function buildProjectMessagesPayload(
   }
 
   const hasTerminal = hasTerminalReplyAfterLastUser(rows);
+  const generationProgress = statusMessage
+    ? parseGenerationProgress(statusMessage.content)
+    : null;
 
   return {
     messages,
     isGenerating: Boolean(statusMessage) && !hasTerminal,
     latestFragment: latest?.fragment ?? null,
+    generationProgress,
   };
 }
