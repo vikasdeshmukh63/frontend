@@ -84,6 +84,81 @@ export async function writeSandboxProjectFiles(
   }
 }
 
+/** Kill and restart Next dev server, then wait until the app responds with content. */
+export async function restartSandboxDevServer(
+  sandboxId: string,
+  maxWaitMs = 60_000
+): Promise<{ ready: boolean; httpCode: string }> {
+  const sandbox = await Sandbox.connect(sandboxId);
+  await sandbox.setTimeout(SANDBOX_TIMEOUT);
+
+  try {
+    await runSandboxCommand(
+      sandbox,
+      `cd "${SANDBOX_PROJECT_ROOT}" && pkill -f "next dev" 2>/dev/null || true`,
+      { timeoutMs: 10_000 }
+    );
+  } catch {
+    /* pkill may exit non-zero when no process exists */
+  }
+
+  try {
+    await runSandboxCommand(
+      sandbox,
+      `(cd "${SANDBOX_PROJECT_ROOT}" && nohup npm run dev -- -p 3000 -H 0.0.0.0 > /tmp/next-dev.log 2>&1 &) && sleep 1 && exit 0`,
+      { timeoutMs: 15_000 }
+    );
+  } catch (e) {
+    console.warn('[sandbox] restartSandboxDevServer: start command failed', e);
+  }
+
+  const result = await waitForSandboxPreviewReady(sandboxId, maxWaitMs);
+  if (!result.ready) {
+    try {
+      const log = await runSandboxCommand(
+        sandbox,
+        'tail -n 40 /tmp/next-dev.log 2>/dev/null || echo "(no dev log)"',
+        { timeoutMs: 10_000 }
+      );
+      console.warn(
+        `[sandbox] restartSandboxDevServer: preview not ready (HTTP ${result.httpCode}):`,
+        log.stdout.slice(-2000)
+      );
+    } catch {
+      /* ignore log read failure */
+    }
+  }
+  return result;
+}
+
+/**
+ * Fast preview path: nudge HMR, poll briefly, restart only if the dev server looks dead.
+ */
+export async function prepareSandboxPreview(
+  sandboxId: string,
+  options?: { maxWaitMs?: number; forceRestart?: boolean }
+): Promise<{ ready: boolean; httpCode: string }> {
+  const maxWait = options?.maxWaitMs ?? 45_000;
+
+  if (options?.forceRestart) {
+    return restartSandboxDevServer(sandboxId, maxWait);
+  }
+
+  await refreshSandboxDevServer(sandboxId);
+  const first = await waitForSandboxPreviewReady(sandboxId, maxWait);
+  if (first.ready) return first;
+
+  const deadServer =
+    first.httpCode === '000' ||
+    first.httpCode === '502' ||
+    first.httpCode === '503';
+  if (deadServer) {
+    return restartSandboxDevServer(sandboxId, maxWait);
+  }
+
+  return first;
+}
+
 /** Start Next dev server if port 3000 is not responding (template process may have died). */
 export async function ensureSandboxDevServerRunning(
   sandboxId: string
@@ -174,7 +249,7 @@ export async function refreshSandboxDevServer(sandboxId: string): Promise<void> 
  */
 export async function waitForSandboxPreviewReady(
   sandboxId: string,
-  maxWaitMs = 120_000
+  maxWaitMs = 60_000
 ): Promise<{ ready: boolean; httpCode: string }> {
   const sandbox = await Sandbox.connect(sandboxId);
   await sandbox.setTimeout(SANDBOX_TIMEOUT);
@@ -203,7 +278,8 @@ export async function waitForSandboxPreviewReady(
           body.length > 400);
       const hasRenderableContent =
         body.includes('<main') ||
-        textContent.length > 80 ||
+        body.includes('__next') ||
+        textContent.length > 40 ||
         /next-error|data-next-error|Build Error|Failed to compile/i.test(body);
       const isBuildError =
         /Build Error|Application error|Module not found|Failed to compile/i.test(

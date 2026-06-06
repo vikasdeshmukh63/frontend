@@ -2,13 +2,13 @@ import 'server-only';
 
 import { Sandbox } from '@e2b/code-interpreter';
 
+import { ensureAppPageForPreview } from '@/inngest/auto-wire-page';
 import { ensureSandboxBootstrapFiles } from '@/inngest/sandbox-bootstrap';
 import {
   loadInitialAgentFilesFromLatestFragment,
-  refreshSandboxDevServer,
+  prepareSandboxPreview,
   resolveOrCreateSandboxId,
   syncSandboxFilesFromMap,
-  waitForSandboxPreviewReady,
 } from '@/inngest/project-sandbox';
 import { prisma } from '@/lib/db';
 
@@ -18,12 +18,18 @@ export type ReviveProjectSandboxResult = {
   previewReady: boolean;
 };
 
+export type ReviveProjectSandboxOptions = {
+  /** Manual refresh: sync files then restart dev server if needed. */
+  forceRestart?: boolean;
+};
+
 /**
  * Reconnects or recreates the E2B sandbox, syncs the latest fragment files,
- * starts the dev server, and returns a fresh preview URL for the demo iframe.
+ * wires app/page.tsx, nudges the dev server, and returns a fresh preview URL.
  */
 export async function reviveProjectSandbox(
-  projectId: string
+  projectId: string,
+  options?: ReviveProjectSandboxOptions
 ): Promise<ReviveProjectSandboxResult> {
   const sandboxId = await resolveOrCreateSandboxId(projectId);
   const latestFiles = await loadInitialAgentFilesFromLatestFragment(projectId);
@@ -33,27 +39,38 @@ export async function reviveProjectSandbox(
   }
 
   await ensureSandboxBootstrapFiles(sandboxId);
-  await refreshSandboxDevServer(sandboxId);
-  const { ready: previewReady } = await waitForSandboxPreviewReady(
+  await ensureAppPageForPreview({
     sandboxId,
-    120_000
-  );
+    userPrompt: 'App preview',
+  });
+
+  const { ready: previewReady } = await prepareSandboxPreview(sandboxId, {
+    maxWaitMs: 45_000,
+    forceRestart: options?.forceRestart,
+  });
 
   const sandbox = await Sandbox.connect(sandboxId);
   const sandboxPreviewUrl = `https://${sandbox.getHost(3000)}`;
 
-  await prisma.$transaction([
-    prisma.project.update({
+  try {
+    await prisma.project.update({
       where: { id: projectId },
       data: { e2bSandboxId: sandboxId },
-    }),
-    prisma.fragment.updateMany({
+    });
+  } catch (e) {
+    console.warn('[reviveProjectSandbox] project update failed:', e);
+  }
+
+  try {
+    await prisma.fragment.updateMany({
       where: {
         message: { projectId },
       },
       data: { sandboxUrl: sandboxPreviewUrl },
-    }),
-  ]);
+    });
+  } catch (e) {
+    console.warn('[reviveProjectSandbox] fragment update failed:', e);
+  }
 
   return { sandboxId, sandboxPreviewUrl, previewReady };
 }

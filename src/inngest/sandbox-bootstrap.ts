@@ -3,6 +3,7 @@ import {
   writeSandboxProjectFiles,
 } from '@/inngest/project-sandbox';
 import { SANDBOX_SAFE_COPY_TS } from '@/inngest/sandbox-safe-copy';
+import { DEFAULT_APP_GLOBALS_CSS } from '@/inngest/sandbox-globals-css';
 import { sanitizeFileMap } from '@/inngest/source-sanitize';
 
 /** Matches create-next-app + shadcn template — required for Next.js 15 App Router. */
@@ -31,7 +32,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <head>
         <meta httpEquiv="Permissions-Policy" content="clipboard-write=(self)" />
       </head>
@@ -122,6 +123,7 @@ export function stripProtectedPathsFromFileMap(
 export function getSandboxBootstrapFiles(): Record<string, string> {
   return {
     'app/layout.tsx': DEFAULT_APP_LAYOUT,
+    'app/globals.css': DEFAULT_APP_GLOBALS_CSS,
     'lib/safe-copy.ts': SANDBOX_SAFE_COPY_TS,
   };
 }
@@ -145,6 +147,7 @@ export async function ensureSandboxBootstrapFiles(sandboxId: string): Promise<vo
     );
     if (typeof srcPage === 'string' && srcPage.trim().length > 0) {
       files.push({ path: 'src/app/layout.tsx', content: DEFAULT_APP_LAYOUT });
+      files.push({ path: 'src/app/globals.css', content: DEFAULT_APP_GLOBALS_CSS });
     }
   } catch {
     /* app router lives under /app only */

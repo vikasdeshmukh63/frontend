@@ -10,7 +10,7 @@ import {
   ExternalLinkIcon,
   RefreshCcwIcon,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 interface Props {
   projectId: string;
@@ -22,9 +22,14 @@ interface Props {
 
 type FrameState = 'loading' | 'ready' | 'error';
 
-function previewSrc(sandboxUrl: string, fragmentId: string, refreshKey: number): string {
+function previewSrc(
+  sandboxUrl: string,
+  fragmentId: string,
+  refreshKey: number,
+  frameKey: number
+): string {
   const separator = sandboxUrl.includes('?') ? '&' : '?';
-  return `${sandboxUrl}${separator}v=${encodeURIComponent(fragmentId)}&r=${refreshKey}`;
+  return `${sandboxUrl}${separator}v=${encodeURIComponent(fragmentId)}&r=${refreshKey}&f=${frameKey}`;
 }
 
 export function FragmentWeb({
@@ -34,51 +39,46 @@ export function FragmentWeb({
   onSandboxUrlChange,
 }: Props) {
   const trpc = useTRPC();
-  const [fragmentKey, setFragmentKey] = useState(0);
+  const [frameKey, setFrameKey] = useState(0);
   const [copied, setCopied] = useState(false);
   const [frameState, setFrameState] = useState<FrameState>('loading');
   const [sandboxUrl, setSandboxUrl] = useState(data.sandboxUrl);
-  const [previewReady, setPreviewReady] = useState(false);
   const [warmError, setWarmError] = useState<string | null>(null);
 
   const warmPreview = useMutation(
     trpc.projects.warmPreview.mutationOptions({
       onSuccess: (result) => {
         setSandboxUrl(result.sandboxPreviewUrl);
-        setPreviewReady(result.previewReady);
         setWarmError(
           result.previewReady
             ? null
-            : 'Preview sandbox is still starting. Try Refresh in a few seconds.'
+            : 'Preview is still compiling. Wait a moment and click Refresh again.'
         );
         onSandboxUrlChange?.(result.sandboxPreviewUrl);
-        setFragmentKey((k) => k + 1);
+        setFrameKey((k) => k + 1);
+        setFrameState('loading');
       },
       onError: (e) => {
-        setWarmError(e.message || 'Could not start preview sandbox');
-        setPreviewReady(false);
+        setWarmError(e.message || 'Could not refresh preview sandbox');
       },
     })
   );
 
-  const runWarmPreview = useCallback(() => {
-    setWarmError(null);
-    setFrameState('loading');
-    setPreviewReady(false);
-    warmPreview.mutate({ id: projectId });
-  }, [projectId, warmPreview]);
-
   useEffect(() => {
     setSandboxUrl(data.sandboxUrl);
-    runWarmPreview();
-  }, [data.id, refreshKey, projectId]); // eslint-disable-line react-hooks/exhaustive-deps -- warm on fragment/sync change only
+    setFrameState('loading');
+    setWarmError(null);
+    setFrameKey((k) => k + 1);
+  }, [data.id, data.sandboxUrl, refreshKey]);
 
   const iframeSrc = sandboxUrl
-    ? previewSrc(sandboxUrl, data.id, refreshKey)
+    ? previewSrc(sandboxUrl, data.id, refreshKey, frameKey)
     : '';
 
   const onRefresh = () => {
-    runWarmPreview();
+    setWarmError(null);
+    setFrameState('loading');
+    warmPreview.mutate({ id: projectId, forceRestart: true });
   };
 
   const handleCopy = () => {
@@ -87,15 +87,15 @@ export function FragmentWeb({
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const showErrorPanel = Boolean(warmError) || frameState === 'error';
   const showLoadingOverlay =
-    !showErrorPanel &&
-    (warmPreview.isPending || !previewReady || frameState === 'loading');
+    warmPreview.isPending || (Boolean(iframeSrc) && frameState === 'loading');
+
+  const showEmptyState = !sandboxUrl && !warmPreview.isPending;
 
   return (
     <div className="flex h-full w-full flex-col">
       <div className="bg-sidebar flex items-center gap-x-2 border-b p-2">
-        <Hint text="Refresh" side="bottom">
+        <Hint text="Refresh preview sandbox" side="bottom">
           <Button
             size="sm"
             variant="outline"
@@ -113,7 +113,9 @@ export function FragmentWeb({
             className="flex-1 justify-start text-start font-normal"
             disabled={!sandboxUrl || copied}
           >
-            <span className="truncate">{sandboxUrl}</span>
+            <span className="truncate">
+              {sandboxUrl || 'No preview URL yet'}
+            </span>
           </Button>
         </Hint>
         <Hint text="Open in new tab" side="bottom" align="start">
@@ -123,7 +125,10 @@ export function FragmentWeb({
             disabled={!sandboxUrl}
             onClick={() => {
               if (!sandboxUrl) return;
-              window.open(sandboxUrl, '_blank');
+              window.open(
+                previewSrc(sandboxUrl, data.id, refreshKey, frameKey),
+                '_blank'
+              );
             }}
           >
             <ExternalLinkIcon />
@@ -131,41 +136,53 @@ export function FragmentWeb({
         </Hint>
       </div>
 
-      <div className="relative h-full w-full">
+      <div className="relative h-full w-full bg-white">
         {iframeSrc ? (
           <iframe
-            key={fragmentKey}
-            className="h-full w-full"
-            sandbox="allow-forms allow-scripts allow-same-origin"
+            key={frameKey}
+            className="h-full w-full bg-white"
+            sandbox="allow-forms allow-scripts allow-same-origin allow-popups"
             allow="clipboard-write"
             loading="eager"
             src={iframeSrc}
             onLoad={() => {
-              if (previewReady) setFrameState('ready');
+              setFrameState('ready');
+              setWarmError(null);
             }}
             onError={() => setFrameState('error')}
           />
         ) : null}
 
-        {showLoadingOverlay && (
-          <div className="bg-background/80 text-muted-foreground absolute inset-0 flex flex-col items-center justify-center gap-2 backdrop-blur-[1px]">
-            <p className="text-sm">
-              {warmPreview.isPending
-                ? 'Starting preview sandbox…'
-                : 'Loading preview…'}
-            </p>
-            <p className="text-muted-foreground max-w-xs text-center text-xs">
-              First load can take up to a minute while Next.js compiles.
-            </p>
+        {showEmptyState && (
+          <div className="bg-background text-muted-foreground absolute inset-0 flex flex-col items-center justify-center gap-3 p-6">
+            <p className="text-sm">Preview URL is not available yet.</p>
+            <Button size="sm" variant="default" onClick={onRefresh}>
+              <RefreshCcwIcon className="size-4" /> Start preview
+            </Button>
           </div>
         )}
 
-        {showErrorPanel && !warmPreview.isPending && (
+        {showLoadingOverlay && (
+          <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 bg-white/80 text-neutral-600 backdrop-blur-[1px]">
+            <p className="text-sm">
+              {warmPreview.isPending
+                ? 'Syncing preview sandbox…'
+                : 'Loading preview…'}
+            </p>
+            {!warmPreview.isPending && (
+              <p className="max-w-xs text-center text-xs">
+                First compile may take up to a minute inside the iframe.
+              </p>
+            )}
+          </div>
+        )}
+
+        {frameState === 'error' && !warmPreview.isPending && (
           <div className="bg-background/90 absolute inset-0 flex items-center justify-center p-6">
             <div className="bg-card max-w-lg rounded-lg border p-4 text-sm">
               <p className="mb-2 flex items-center gap-2 font-medium">
                 <AlertTriangleIcon className="size-4 text-amber-500" />
-                Preview not ready
+                Preview failed to load
               </p>
               <p className="text-muted-foreground mb-3">
                 {warmError ??
@@ -175,15 +192,28 @@ export function FragmentWeb({
                 <Button size="sm" variant="default" onClick={onRefresh}>
                   <RefreshCcwIcon className="size-4" /> Refresh preview
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => sandboxUrl && window.open(sandboxUrl, '_blank')}
-                >
-                  <ExternalLinkIcon className="size-4" /> Open in new tab
-                </Button>
+                {sandboxUrl && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      window.open(
+                        previewSrc(sandboxUrl, data.id, refreshKey, frameKey),
+                        '_blank'
+                      )
+                    }
+                  >
+                    <ExternalLinkIcon className="size-4" /> Open in new tab
+                  </Button>
+                )}
               </div>
             </div>
+          </div>
+        )}
+
+        {warmError && frameState === 'ready' && !warmPreview.isPending && (
+          <div className="absolute bottom-2 left-2 right-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-900 dark:text-amber-100">
+            {warmError}
           </div>
         )}
       </div>

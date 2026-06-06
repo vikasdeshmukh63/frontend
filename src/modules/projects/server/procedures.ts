@@ -42,7 +42,12 @@ export const projectsRouter = createTRPCRouter({
     }),
 
   warmPreview: protectedProcedure
-    .input(z.object({ id: z.string().min(1) }))
+    .input(
+      z.object({
+        id: z.string().min(1),
+        forceRestart: z.boolean().optional(),
+      })
+    )
     .mutation(async ({ input, ctx }) => {
       const project = await prisma.project.findUnique({
         where: { id: input.id, userId: ctx.auth.userId },
@@ -55,7 +60,9 @@ export const projectsRouter = createTRPCRouter({
       }
 
       try {
-        const revived = await reviveProjectSandbox(project.id);
+        const revived = await reviveProjectSandbox(project.id, {
+          forceRestart: input.forceRestart,
+        });
         return {
           sandboxPreviewUrl: revived.sandboxPreviewUrl,
           previewReady: revived.previewReady,

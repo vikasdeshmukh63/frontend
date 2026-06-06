@@ -41,7 +41,7 @@ import {
   normalizeSandboxRelativePath,
   ensureSandboxDevServerRunning,
   refreshSandboxDevServer,
-  waitForSandboxPreviewReady,
+  prepareSandboxPreview,
   resolveOrCreateSandboxId,
   syncGraphifyArtifactsToSandbox,
   syncSandboxFilesFromMap,
@@ -1394,21 +1394,8 @@ export const codeAgentFunction = inngest.createFunction(
           async () => {
             await ensureSandboxBootstrapFiles(sandboxId);
 
-            const pageAfterBootstrap = await ensureAppPageForPreview({
-              sandboxId,
-              userPrompt: normalizedPrompt,
-            });
-
-            await refreshSandboxDevServer(sandboxId);
-            let { ready: previewReady, httpCode } =
-              await waitForSandboxPreviewReady(sandboxId);
-
-            if (!previewReady) {
-              await ensureSandboxDevServerRunning(sandboxId);
-              await refreshSandboxDevServer(sandboxId);
-              ({ ready: previewReady, httpCode } =
-                await waitForSandboxPreviewReady(sandboxId, 90_000));
-            }
+            const { ready: previewReady, httpCode } =
+              await prepareSandboxPreview(sandboxId, { maxWaitMs: 60_000 });
 
             if (!previewReady) {
               console.warn(
@@ -1420,7 +1407,6 @@ export const codeAgentFunction = inngest.createFunction(
             return {
               sandboxUrl: `https://${sandbox.getHost(3000)}`,
               previewReady,
-              pageSource: pageAfterBootstrap.ok ? pageAfterBootstrap.source : '',
             };
           }
         );
@@ -1477,18 +1463,6 @@ export const codeAgentFunction = inngest.createFunction(
             ...sandboxFiles,
           });
 
-          await syncSandboxFilesFromMap(sandboxId, mergedFiles);
-          await ensureSandboxBootstrapFiles(sandboxId);
-          await ensureAppPageForPreview({
-            sandboxId,
-            userPrompt: normalizedPrompt,
-          });
-          await refreshSandboxDevServer(sandboxId);
-          await waitForSandboxPreviewReady(sandboxId, 120_000);
-
-          const sandbox = await getSandbox(sandboxId);
-          const finalSandboxUrl = `https://${sandbox.getHost(3000)}`;
-
           await prisma.project.update({
             where: { id: event.data.projectId },
             data: { e2bSandboxId: sandboxId },
@@ -1502,7 +1476,7 @@ export const codeAgentFunction = inngest.createFunction(
               type: 'RESULT',
               fragment: {
                 create: {
-                  sandboxUrl: finalSandboxUrl,
+                  sandboxUrl,
                   title: fragmentTitle,
                   files: mergedFiles,
                 },
